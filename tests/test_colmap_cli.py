@@ -7,7 +7,9 @@ from pathlib import Path
 from instasplat.stages.sfm import _is_usable_colmap_model
 from instasplat.utils.colmap_cli import (
     ColmapCliCaps,
+    db_image_count,
     detect_colmap_caps,
+    list_readable_images,
     quality_feature_args,
 )
 
@@ -16,6 +18,8 @@ MODERN_EXTRACT_HELP = """
 --FeatureExtraction.max_image_size arg (=3200)
 --FeatureExtraction.use_gpu arg (=1)
 --SiftExtraction.max_num_features arg (=8192)
+--ImageReader.camera_model arg (=SIMPLE_RADIAL)
+                              {SIMPLE_PINHOLE, PINHOLE, EQUIRECTANGULAR, ...}
 """
 
 LEGACY_EXTRACT_HELP = """
@@ -44,6 +48,7 @@ def test_detect_modern_caps(monkeypatch) -> None:
     monkeypatch.setattr("instasplat.utils.colmap_cli._help_text", fake_help)
     caps = detect_colmap_caps("colmap-fake")
     assert caps.modern
+    assert caps.supports_equirectangular
     assert caps.max_image_size == "--FeatureExtraction.max_image_size"
     assert caps.extract_use_gpu == "--FeatureExtraction.use_gpu"
     assert caps.max_num_features == "--SiftExtraction.max_num_features"
@@ -66,6 +71,7 @@ def test_detect_legacy_caps(monkeypatch) -> None:
     monkeypatch.setattr("instasplat.utils.colmap_cli._help_text", fake_help)
     caps = detect_colmap_caps("colmap-legacy")
     assert not caps.modern
+    assert not caps.supports_equirectangular
     assert caps.max_image_size == "--SiftExtraction.max_image_size"
     assert caps.extract_use_gpu == "--SiftExtraction.use_gpu"
     assert caps.match_use_gpu == "--SiftMatching.use_gpu"
@@ -79,6 +85,7 @@ def test_quality_args_with_explicit_caps() -> None:
         max_num_features="--SiftExtraction.max_num_features",
         match_use_gpu="--FeatureMatching.use_gpu",
         modern=True,
+        supports_equirectangular=True,
     )
     assert quality_feature_args("low", caps) == [
         "--FeatureExtraction.max_image_size",
@@ -99,3 +106,26 @@ def test_telemetry_prior_not_usable_model(tmp_path: Path) -> None:
     real.mkdir()
     (real / "images.bin").write_bytes(b"bin")
     assert _is_usable_colmap_model(real)
+
+
+def test_list_readable_images_skips_broken_symlink(tmp_path: Path) -> None:
+    good = tmp_path / "a.jpg"
+    good.write_bytes(b"jpg")
+    bad = tmp_path / "b.jpg"
+    bad.symlink_to(tmp_path / "missing.jpg")
+    found = list_readable_images(tmp_path)
+    assert found == [good]
+
+
+def test_db_image_count_empty_and_missing(tmp_path: Path) -> None:
+    assert db_image_count(tmp_path / "no.db") == 0
+    import sqlite3
+
+    db = tmp_path / "db.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute("CREATE TABLE images (image_id INTEGER PRIMARY KEY, name TEXT)")
+    conn.execute("INSERT INTO images VALUES (1, 'a.jpg')")
+    conn.execute("INSERT INTO images VALUES (2, 'b.jpg')")
+    conn.commit()
+    conn.close()
+    assert db_image_count(db) == 2

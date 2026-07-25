@@ -171,5 +171,11 @@ def run_fallback_poses(cfg: PipelineConfig, paths: JobPaths) -> FallbackResult |
     if cfg.dry_run:
         out.mkdir(parents=True, exist_ok=True)
         n = 0
+    if n <= 0 and not cfg.dry_run:
+        log.warning(
+            "Telemetry fallback produced 0 poses (no images in %s and/or no frame_times) — not usable",
+            paths.cubemap_images,
+        )
+        return None
     log.warning("Installed telemetry pose prior with %d images (SfM fallback)", n)
     return FallbackResult(out, n, "gyro_gps_prior")

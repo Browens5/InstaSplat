@@ -56,6 +56,11 @@ instasplat run --job ./runs/walk_360 --from merge_chunks --to package
 instasplat validate --job ./runs/walk_360
 ```
 
+Do **not** run the single-mode `sfm` stage on a tiled job — top-level
+`01_frames/` is empty; tiles live under `10_chunks/`. Use `process_chunks`
+(SfM mode: **perspective_cubemap**). Native `equirectangular` COLMAP is
+optional and often unsupported or empty-input on Mac.
+
 GUI: check **Stages** before Run (use “All for mode” to reset).
 
 ## Inputs that work best

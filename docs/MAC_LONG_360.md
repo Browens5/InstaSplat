@@ -46,6 +46,12 @@ instasplat run --job ./runs/walk_360 --from align_chunks --to package
 pre-checked, then click **Continue run**. Finished tiles/artifacts are skipped
 (`skip_existing`). Use **New project** to clear and start fresh.
 
+The right-hand **Live viewer** polls the job folder during a run: COLMAP sparse
+points after the mapper writes `points3D.*`, then splat centers from the newest
+training/export PLY. Use the **Artifacts** tab to browse frames, masks, sparse
+models, and exports (double-click to open; **Show in 3D** for `points3D` / `.ply`).
+Optional checkbox **Open Brush native viewer** still launches Brush’s own window.
+
 ## Run sections individually
 
 ```bash

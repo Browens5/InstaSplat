@@ -180,7 +180,7 @@ def check_python_ml() -> list[DepStatus]:
                 True,
                 version=torch.__version__,
                 notes=f"MPS available: {mps}",
-                required_for=["mask"],
+                required_for=["mask", "metal_equirect"],
             )
         )
     except ImportError:
@@ -189,7 +189,7 @@ def check_python_ml() -> list[DepStatus]:
                 "pytorch",
                 False,
                 notes="pip install torch (MPS builds for Apple Silicon)",
-                required_for=["mask"],
+                required_for=["mask", "metal_equirect"],
             )
         )
     try:
@@ -246,9 +246,11 @@ def report_dict(
 
 def _ready_stages(deps: list[DepStatus]) -> dict[str, bool]:
     by_name = {d.name: d for d in deps}
-    train_ok = by_name.get("brush", DepStatus("brush", False)).available or by_name.get(
-        "opensplat", DepStatus("opensplat", False)
-    ).available
+    train_ok = (
+        by_name.get("brush", DepStatus("brush", False)).available
+        or by_name.get("opensplat", DepStatus("opensplat", False)).available
+        or by_name.get("pytorch", DepStatus("pytorch", False)).available
+    )
     mac_long_360 = (
         by_name.get("ffmpeg", DepStatus("ffmpeg", False)).available
         and by_name.get("colmap", DepStatus("colmap", False)).available

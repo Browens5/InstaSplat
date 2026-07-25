@@ -107,7 +107,7 @@ Recommended backends in the manifest:
 
 | Backend | When to use |
 |---------|-------------|
-| `gsplat_3dgut` | Native equirect / fisheye training (skip cubemap) |
+| `gsplat_3dgut` | Native equirect / fisheye training (skip cubemap). Local Mac counterpart: `train.backend: metal_equirect` — see [METAL_EQUIRECT_TRAINER.md](METAL_EQUIRECT_TRAINER.md) |
 | `lichtfeld` | CUDA MCMC / workstation-grade train + export |
 | `nerfstudio_splatfacto` | Use packaged `transforms.json` |
 | `hierarchical_merge_cuda` | Kerbl hierarchy merger on tile anchors |

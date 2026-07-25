@@ -156,7 +156,7 @@ class ScaleConfig:
     gps_csv: Path | None = None
 
 
-TrainerBackend = Literal["brush", "opensplat"]
+TrainerBackend = Literal["brush", "opensplat", "metal_equirect"]
 
 
 @dataclass
@@ -164,6 +164,7 @@ class TrainConfig:
     """Gaussian splat training settings (Metal-capable backends)."""
 
     # brush = ArthurBrussee/brush (WebGPU/Metal); opensplat = pierotofy/OpenSplat (MPS)
+    # metal_equirect = InstaSplat native equirect trainer (3DGUT/gsplat-inspired, MPS/Metal)
     backend: TrainerBackend = "brush"
     total_steps: int = 30_000
     max_resolution: int = 1600
@@ -172,6 +173,9 @@ class TrainConfig:
     brush_bin: str = "brush"
     opensplat_bin: str = "opensplat"
     extra_args: list[str] = field(default_factory=list)
+    # metal_equirect knobs
+    sh_degree: int = 1
+    lr: float = 0.01
 
 
 @dataclass
@@ -406,12 +410,14 @@ scale:
   stereo_baseline_m: 0.065
 
 train:
-  backend: brush            # brush | opensplat (Metal MPS)
+  backend: brush            # brush | opensplat | metal_equirect
   total_steps: 20000
-  max_resolution: 1600
+  max_resolution: 1600      # equirect width when backend=metal_equirect
   with_viewer: false
   brush_bin: brush
   opensplat_bin: opensplat
+  sh_degree: 1              # metal_equirect SH degree (0 or 1)
+  lr: 0.01                  # metal_equirect Adam base LR
 
 export:
   formats: [ply, sog, spz]

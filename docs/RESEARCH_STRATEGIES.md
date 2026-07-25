@@ -117,7 +117,9 @@ preflight gates, INSV/sidecar telemetry, scale-before-refine, resume tiles, merg
 
 ### Next (cloud / research)
 1. **LingBot-Map** as CUDA cloud SfM backend (streaming poses+depth) → COLMAP/Nerfstudio export.
-2. **Native equirect training** via cloud 3DGUT/gsplat (manifest ready; worker runner TBD).
+2. **Native equirect training** — local `metal_equirect` backend (UT equirect rasterizer;
+   see [METAL_EQUIRECT_TRAINER.md](METAL_EQUIRECT_TRAINER.md)); cloud 3DGUT/gsplat remains
+   the CUDA scale path (`cloud_job.json` worker runner TBD).
 3. **Kerbl hierarchy merger** binary integration for true LOD trees.
 4. Full Self-Cali distortion network (iResNet) for raw fisheye.
 
@@ -132,10 +134,10 @@ preflight gates, INSV/sidecar telemetry, scale-before-refine, resume tiles, merg
 
 | Component | Best open option on Mac |
 |-----------|-------------------------|
-| Train | Brush (WebGPU/Metal) or OpenSplat (MPS) |
-| View | Brush viewer, MetalSplatter, PlayCanvas |
+| Train | Brush / OpenSplat (cubemap) or **metal_equirect** (native 360) |
+| View | Brush viewer, MetalSplatter, PlayCanvas, InstaSplat GUI |
 | Compress | splat-transform → SOG/SPZ |
-| Distorted 360 train | Cubemap locally; 3DGUT/LichtFeld in cloud |
+| Distorted 360 train | **metal_equirect** locally; 3DGUT/LichtFeld in cloud for scale |
 | Large LOD | Hierarchical-3DGS merger (CUDA) or streamed SOG |
 
 ---

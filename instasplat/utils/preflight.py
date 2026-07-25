@@ -46,11 +46,18 @@ def run_preflight(cfg: PipelineConfig, paths: JobPaths) -> PreflightResult:
     trainer_ok = (deps.get("brush") and deps["brush"].available) or (
         deps.get("opensplat") and deps["opensplat"].available
     )
-    if not trainer_ok:
+    metal_equirect_ok = deps.get("pytorch") and deps["pytorch"].available
+    if cfg.train.backend == "metal_equirect":
+        if not metal_equirect_ok:
+            result.blocking.append(
+                "metal_equirect trainer needs PyTorch (MPS on Apple Silicon). "
+                "pip install torch — see docs/METAL_EQUIRECT_TRAINER.md"
+            )
+    elif not trainer_ok:
         result.blocking.append(
-            "No Metal trainer found (brush or opensplat). "
-            "Run `instasplat install-brush` (auto cargo release build) "
-            "or build OpenSplat with -DGPU_RUNTIME=MPS."
+            "No Metal trainer found (brush, opensplat, or pytorch for metal_equirect). "
+            "Run `instasplat install-brush`, build OpenSplat with -DGPU_RUNTIME=MPS, "
+            "or set train.backend: metal_equirect with PyTorch."
         )
     if not deps.get("splat-transform") or not deps["splat-transform"].available:
         result.blocking.append("Missing splat-transform (npm i -g @playcanvas/splat-transform)")

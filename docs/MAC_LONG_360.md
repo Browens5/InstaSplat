@@ -52,6 +52,10 @@ training/export PLY. Use the **Artifacts** tab to browse frames, masks, sparse
 models, and exports (double-click to open; **Show in 3D** for `points3D` / `.ply`).
 Optional checkbox **Open Brush native viewer** still launches Brush’s own window.
 
+For **native 360 training** (full equirect frames, not cubemap faces), set trainer to
+`metal_equirect` (GUI Trainer combo or `--trainer metal_equirect`). Requires PyTorch
+with MPS on Apple Silicon — see [METAL_EQUIRECT_TRAINER.md](METAL_EQUIRECT_TRAINER.md).
+
 ## Run sections individually
 
 ```bash

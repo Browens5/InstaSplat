@@ -11,3 +11,4 @@ Deep-dive guides. Start with the main [README](../README.md) if you are new.
 | [FEASIBILITY.md](FEASIBILITY.md) | Planners | What works on Mac vs cloud |
 | [CLOUD.md](CLOUD.md) | Operators | Hybrid / GPU worker notes |
 | [RESEARCH_STRATEGIES.md](RESEARCH_STRATEGIES.md) | Researchers | Open 3DGS projects that shaped the design |
+| [METAL_EQUIRECT_TRAINER.md](METAL_EQUIRECT_TRAINER.md) | Mac / research | Native equirect Gaussian trainer (3DGUT-inspired) |

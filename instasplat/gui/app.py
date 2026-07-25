@@ -504,7 +504,11 @@ class MainWindow(QMainWindow):
         opts_form.addRow(self.large_8k_cb)
 
         self.trainer = QComboBox()
-        self.trainer.addItems(["brush", "opensplat"])
+        self.trainer.addItems(["brush", "opensplat", "metal_equirect"])
+        self.trainer.setToolTip(
+            "brush / opensplat: cubemap pinhole. "
+            "metal_equirect: native 360 trainer (equirect + COLMAP, MPS/Metal)."
+        )
         opts_form.addRow("Trainer", self.trainer)
 
         self.brush_viewer_cb = QCheckBox(
@@ -512,7 +516,8 @@ class MainWindow(QMainWindow):
         )
         self.brush_viewer_cb.setChecked(False)
         self.brush_viewer_cb.setToolTip(
-            "Passes --with-viewer to Brush. In-GUI 3D panel still polls export PLYs."
+            "Passes --with-viewer to Brush. In-GUI 3D panel still polls export PLYs. "
+            "Ignored for metal_equirect."
         )
         opts_form.addRow(self.brush_viewer_cb)
 

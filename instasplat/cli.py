@@ -215,7 +215,7 @@ def run(
     trainer: str | None = typer.Option(
         None,
         "--trainer",
-        help="Training backend: brush (default) or opensplat (Metal MPS)",
+        help="Training backend: brush | opensplat | metal_equirect",
     ),
     no_refine: bool = typer.Option(False, "--no-refine", help="Disable pose refine stage"),
     streamed_lod: bool = typer.Option(
@@ -269,7 +269,9 @@ def mac_360(
     ),
     output_dir: Path = typer.Option(DEFAULT_OUT, "--output", "-o"),
     project_name: str = typer.Option("walk_360", "--name", "-n"),
-    trainer: str = typer.Option("brush", "--trainer", help="brush | opensplat"),
+    trainer: str = typer.Option(
+        "brush", "--trainer", help="brush | opensplat | metal_equirect"
+    ),
     no_mask: bool = typer.Option(False, help="Disable YOLO people masking"),
     dry_run: bool = typer.Option(False, help="Plan chunks + preflight only"),
     allow_unstitched: bool = typer.Option(False, "--allow-unstitched"),
@@ -374,8 +376,10 @@ def _build_run_config(
         cfg.enable_mac_long_360_defaults()
 
     if trainer:
-        if trainer not in {"brush", "opensplat"}:
-            raise typer.BadParameter("trainer must be 'brush' or 'opensplat'")
+        if trainer not in {"brush", "opensplat", "metal_equirect"}:
+            raise typer.BadParameter(
+                "trainer must be 'brush', 'opensplat', or 'metal_equirect'"
+            )
         cfg.train.backend = trainer  # type: ignore[assignment]
     if no_refine:
         cfg.refine.enabled = False

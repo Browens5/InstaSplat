@@ -1,4 +1,4 @@
-"""Train a 3D Gaussian splat (Brush or OpenSplat Metal backends)."""
+"""Train a 3D Gaussian splat (Brush, OpenSplat, or metal_equirect)."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ class TrainResult:
 
 
 def _prepare_colmap_dataset(paths: JobPaths, model_dir: Path) -> Path:
-    """Assemble COLMAP layout for Brush and OpenSplat."""
+    """Assemble COLMAP layout for Brush and OpenSplat (pinhole / cubemap)."""
     ds = paths.train / "colmap_dataset"
     images = ds / "images"
     sparse0 = ds / "sparse" / "0"
@@ -150,6 +150,24 @@ def _run_opensplat(
     return binary
 
 
+def _run_metal_equirect(
+    cfg: PipelineConfig,
+    paths: JobPaths,
+    model_dir: Path,
+    log,
+) -> str:
+    from instasplat.metal_equirect import run_metal_equirect_train
+
+    result = run_metal_equirect_train(cfg, paths, model_dir)
+    log.info(
+        "metal_equirect finished device=%s gaussians=%d loss=%.5f",
+        result.device,
+        result.n_gaussians,
+        result.final_loss,
+    )
+    return "metal_equirect"
+
+
 def run_train(cfg: PipelineConfig, paths: JobPaths, model_dir: Path) -> TrainResult:
     from instasplat.utils.brush_install import ensure_brush
     from instasplat.utils.control import get_controller
@@ -158,14 +176,6 @@ def run_train(cfg: PipelineConfig, paths: JobPaths, model_dir: Path) -> TrainRes
     log = get_logger("instasplat.train", paths.logs / "train.log")
     get_controller().checkpoint("train")
     backend = cfg.train.backend
-    if backend == "brush" and not cfg.dry_run:
-        installed = ensure_brush(auto_install=True)
-        if not installed.ok:
-            raise RuntimeError(installed.message)
-        if installed.brush_path:
-            cfg.train.brush_bin = str(installed.brush_path)
-        log.info("%s", installed.message)
-    dataset = _prepare_colmap_dataset(paths, model_dir)
     export_dir = paths.brush_export
     export_dir.mkdir(parents=True, exist_ok=True)
 
@@ -173,6 +183,21 @@ def run_train(cfg: PipelineConfig, paths: JobPaths, model_dir: Path) -> TrainRes
     if existing and cfg.skip_existing:
         log.info("Skipping train; found existing splat %s", existing)
         return TrainResult(export_dir, existing, cfg.train.brush_bin, backend)
+
+    if backend == "metal_equirect":
+        trainer = _run_metal_equirect(cfg, paths, model_dir, log)
+        ply = None if cfg.dry_run else _find_latest_ply(export_dir)
+        return TrainResult(export_dir, ply, trainer, backend)
+
+    if backend == "brush" and not cfg.dry_run:
+        installed = ensure_brush(auto_install=True)
+        if not installed.ok:
+            raise RuntimeError(installed.message)
+        if installed.brush_path:
+            cfg.train.brush_bin = str(installed.brush_path)
+        log.info("%s", installed.message)
+
+    dataset = _prepare_colmap_dataset(paths, model_dir)
 
     if backend == "opensplat":
         trainer = _run_opensplat(cfg, dataset, export_dir, paths.logs, log)

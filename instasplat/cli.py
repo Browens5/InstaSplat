@@ -438,7 +438,8 @@ def _execute_pipeline(cfg: PipelineConfig) -> None:
                     f"ETA {format_duration(ev.stage_eta_sec)})"
                 ),
             )
-            console.log(ev.terminal_line())
+            if not ev.quiet:
+                console.log(ev.terminal_line())
 
         result = Pipeline(cfg, on_progress=on_progress).run()
 

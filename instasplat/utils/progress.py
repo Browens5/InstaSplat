@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -51,6 +53,8 @@ class ProgressEvent:
     overall_elapsed_sec: float
     overall_eta_sec: float | None
     status: str = "running"  # running | paused | finished | stopped
+    # Heartbeats are frequent — UIs should update bars but skip log spam
+    quiet: bool = False
 
     def terminal_line(self) -> str:
         eta = format_duration(self.stage_eta_sec)
@@ -60,6 +64,15 @@ class ProgressEvent:
             f"[{self.stage_index + 1}/{self.stage_count}] {self.stage}: {self.message} "
             f"| elapsed {el} | ETA {eta} | overall ETA {oeta}"
         )
+
+
+def stage_fraction(elapsed_sec: float, eta_sec: float | None) -> float:
+    """0–0.99 in-stage progress from elapsed + remaining estimate."""
+    rem = max(0.0, float(eta_sec)) if eta_sec is not None else 0.0
+    denom = max(0.0, float(elapsed_sec)) + rem
+    if denom <= 0:
+        return 0.0
+    return min(0.99, float(elapsed_sec) / denom)
 
 
 @dataclass
@@ -107,7 +120,13 @@ class StageProgressTracker:
 
     def heartbeat(self, message: str | None = None, status: str = "running") -> ProgressEvent:
         name = self._current or (self.stages[self._idx] if self.stages else "pipeline")
-        return self.event(name, self._idx, message or f"Running {name}", status=status)
+        return self.event(
+            name,
+            self._idx,
+            message or f"Running {name}",
+            status=status,
+            quiet=True,
+        )
 
     def event(
         self,
@@ -117,6 +136,7 @@ class StageProgressTracker:
         *,
         frac_override: float | None = None,
         status: str = "running",
+        quiet: bool = False,
     ) -> ProgressEvent:
         now = time.time()
         overall_elapsed = now - self._t0
@@ -141,7 +161,11 @@ class StageProgressTracker:
             overall_elapsed_sec=overall_elapsed,
             overall_eta_sec=overall_eta,
             status=status,
+            quiet=quiet,
         )
+
+    def estimate_seconds(self, stage: str) -> float:
+        return self._stage_estimate(stage)
 
     def _stage_estimate(self, stage: str) -> float:
         if stage in self.prior_timings:
@@ -171,3 +195,101 @@ class StageProgressTracker:
 
     def to_timings_dict(self) -> dict[str, Any]:
         return dict(self._completed)
+
+
+class HeartbeatPublisher:
+    """Emit quiet progress heartbeats on a background thread while a stage runs."""
+
+    def __init__(
+        self,
+        tracker: StageProgressTracker,
+        on_progress: Callable[[ProgressEvent], None],
+        *,
+        interval_sec: float = 1.0,
+    ) -> None:
+        self._tracker = tracker
+        self._on_progress = on_progress
+        self._interval = max(0.25, float(interval_sec))
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._loop,
+            name="instasplat-progress-heartbeat",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        t = self._thread
+        self._thread = None
+        if t is not None and t.is_alive():
+            t.join(timeout=self._interval + 1.0)
+
+    def _emit(self) -> None:
+        if self._tracker._current is None:
+            return
+        try:
+            self._on_progress(self._tracker.heartbeat())
+        except Exception:  # noqa: BLE001 — never kill a stage over UI progress
+            pass
+
+    def _loop(self) -> None:
+        # Emit once immediately so bars move without waiting a full interval
+        self._emit()
+        while not self._stop.wait(self._interval):
+            self._emit()
+
+
+def live_progress_from_event(
+    ev: ProgressEvent,
+    *,
+    stage_wall_t0: float,
+    run_wall_t0: float,
+    now: float | None = None,
+) -> ProgressEvent:
+    """
+    Recompute elapsed/ETA/fraction for a running stage using wall-clock time.
+
+    Used by the GUI timer so bars keep moving even if a heartbeat is delayed.
+    """
+    if ev.status != "running":
+        return ev
+    now = time.time() if now is None else now
+    stage_elapsed = max(0.0, now - stage_wall_t0)
+    overall_elapsed = max(0.0, now - run_wall_t0)
+    est = DEFAULT_STAGE_SEC.get(ev.stage, 300.0)
+    # Prefer scaling from the last reported remaining+elapsed when available
+    prior_total = (ev.stage_elapsed_sec or 0.0) + (
+        ev.stage_eta_sec if ev.stage_eta_sec is not None else est
+    )
+    if prior_total > 1.0:
+        est = max(est, prior_total)
+    rem = est - stage_elapsed
+    stage_eta = max(5.0, rem) if rem > 0 else max(5.0, stage_elapsed * 0.15)
+    # Remaining later stages ≈ previous overall ETA minus previous stage ETA
+    later = 0.0
+    if ev.overall_eta_sec is not None and ev.stage_eta_sec is not None:
+        later = max(0.0, ev.overall_eta_sec - ev.stage_eta_sec)
+    overall_eta = stage_eta + later
+    base = ev.stage_index / max(ev.stage_count, 1)
+    inner = min(0.95, stage_elapsed / est) if est > 0 else 0.0
+    frac = min(0.999, base + inner / max(ev.stage_count, 1))
+    return ProgressEvent(
+        stage=ev.stage,
+        overall_frac=frac,
+        message=ev.message,
+        stage_index=ev.stage_index,
+        stage_count=ev.stage_count,
+        stage_elapsed_sec=stage_elapsed,
+        stage_eta_sec=stage_eta,
+        overall_elapsed_sec=overall_elapsed,
+        overall_eta_sec=overall_eta,
+        status=ev.status,
+        quiet=True,
+    )

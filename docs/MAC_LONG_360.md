@@ -33,6 +33,18 @@ instasplat mac-360 -i ./capture_equirect_8k.mp4 -o ./runs -n walk_360
 
 Aliases: `instasplat run --large-8k ...` and `instasplat run --tiled ...`.
 
+## Run sections individually
+
+```bash
+instasplat stages --mode tiled
+instasplat stage process_chunks -j ./runs/walk_360
+instasplat run --job ./runs/walk_360 --only align_chunks,merge_chunks
+instasplat run --job ./runs/walk_360 --from merge_chunks --to package
+instasplat validate --job ./runs/walk_360
+```
+
+GUI: multi-select **Stages** before Run (use “All for mode” to reset).
+
 ## Inputs that work best
 
 | Input | Result |

@@ -85,10 +85,14 @@ class MaskConfig:
     conf: float = 0.35
     iou: float = 0.5
     classes: list[int] = field(default_factory=lambda: [0])  # COCO person
-    device: str = "mps"  # Apple Silicon; falls back to cpu
+    device: str = "mps"  # Apple Silicon; per-frame CPU fallback on MPS crashes
     dilate_px: int = 4
     # Brush expects masks where white = keep, black = ignore (or alpha).
     invert: bool = False
+    # retina_masks=True triggers intermittent PyTorch MPS indexing crashes in YOLO-seg
+    retina_masks: bool = False
+    # After this many MPS AcceleratorErrors, switch remaining frames to CPU
+    mps_fail_limit: int = 3
 
 
 @dataclass

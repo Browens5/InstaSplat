@@ -27,12 +27,15 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
+    QSplitter,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from instasplat.config import PipelineConfig
+from instasplat.gui.gl_view import configure_default_surface_format
+from instasplat.gui.viewer_panel import ViewerPanel
 from instasplat.pipeline import Pipeline
 from instasplat.utils.control import RunController
 from instasplat.utils.deps import report_dict
@@ -237,6 +240,35 @@ QTextEdit#log {
   border-radius: 6px;
   color: #c8bca8;
 }
+QTabWidget::pane {
+  border: 1px solid #3d3428;
+  border-radius: 6px;
+  background: #1e1b15;
+}
+QTabBar::tab {
+  background: #252018;
+  color: #b8a990;
+  padding: 8px 14px;
+  border: 1px solid #3d3428;
+  border-bottom: none;
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+  margin-right: 2px;
+}
+QTabBar::tab:selected {
+  background: #3d4f2a;
+  color: #f2ead8;
+}
+QListWidget {
+  background: #14110e;
+  border: 1px solid #4a3f32;
+  border-radius: 6px;
+  padding: 4px;
+  color: #e8e0d4;
+}
+QListWidget::item:selected {
+  background: #3d4f2a;
+}
 QScrollBar:vertical {
   background: #1a1712;
   width: 12px;
@@ -364,8 +396,8 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("InstaSplat")
-        self.resize(980, 720)
-        self.setMinimumSize(720, 480)
+        self.resize(1280, 820)
+        self.setMinimumSize(1100, 640)
         self.thread: QThread | None = None
         self.worker: Worker | None = None
         self.controller = RunController()
@@ -475,6 +507,15 @@ class MainWindow(QMainWindow):
         self.trainer.addItems(["brush", "opensplat"])
         opts_form.addRow("Trainer", self.trainer)
 
+        self.brush_viewer_cb = QCheckBox(
+            "Open Brush native viewer while training (separate window)"
+        )
+        self.brush_viewer_cb.setChecked(False)
+        self.brush_viewer_cb.setToolTip(
+            "Passes --with-viewer to Brush. In-GUI 3D panel still polls export PLYs."
+        )
+        opts_form.addRow(self.brush_viewer_cb)
+
         self.refine_cb = QCheckBox("Refine poses (COLMAP BA + GPS/gyro blend)")
         self.refine_cb.setChecked(True)
         opts_form.addRow(self.refine_cb)
@@ -550,8 +591,8 @@ class MainWindow(QMainWindow):
 
         note = QLabel(
             "Open previous run loads a job folder so you can continue. "
-            "Pause freezes a live run (Unpause resumes); Stop terminates it. "
-            "See docs/MAC_LONG_360.md."
+            "Live viewer shows COLMAP sparse points during SfM and splat centers "
+            "during Brush training. Pause freezes a live run; Stop terminates it."
         )
         note.setWordWrap(True)
         note.setObjectName("tagline")
@@ -559,7 +600,17 @@ class MainWindow(QMainWindow):
         layout.addStretch(1)
 
         scroll.setWidget(body)
-        shell_layout.addWidget(scroll, 1)
+
+        # Left: form · Right: live 3D + artifacts
+        mid = QSplitter(Qt.Horizontal)
+        mid.addWidget(scroll)
+        self.viewer = ViewerPanel()
+        self.viewer.status.connect(lambda msg: None)
+        mid.addWidget(self.viewer)
+        mid.setStretchFactor(0, 3)
+        mid.setStretchFactor(1, 2)
+        mid.setSizes([720, 480])
+        shell_layout.addWidget(mid, 1)
 
         # —— Sticky footer: status, overall bar, buttons, log ——
         footer = QFrame()
@@ -712,6 +763,8 @@ class MainWindow(QMainWindow):
         for line in info.details:
             self.log.append(f"  · {line}")
         self.log.append(f"Suggested stages: {', '.join(info.suggested_stages)}")
+        self.viewer.set_job_root(info.job_dir)
+        self.viewer.start_live()
 
     def _clear_opened_job(self) -> None:
         self._job_dir = None
@@ -722,6 +775,8 @@ class MainWindow(QMainWindow):
         )
         self.status_label.setText("Idle")
         self._select_mode_stages()
+        self.viewer.stop_live()
+        self.viewer.set_job_root(None)
         self.log.append("Cleared opened job — starting a new project")
 
     def _apply_config_to_form(self, cfg: PipelineConfig) -> None:
@@ -745,6 +800,7 @@ class MainWindow(QMainWindow):
         idx = self.trainer.findText(cfg.train.backend)
         if idx >= 0:
             self.trainer.setCurrentIndex(idx)
+        self.brush_viewer_cb.setChecked(bool(cfg.train.with_viewer))
         self.refine_cb.setChecked(bool(cfg.refine.enabled))
         self.lod_cb.setChecked(bool(cfg.export.streamed_lod))
         self.cloud_cb.setChecked(
@@ -928,6 +984,7 @@ class MainWindow(QMainWindow):
         cfg.skip_existing = True
         cfg.mask.enabled = self.mask_cb.isChecked()
         cfg.train.backend = self.trainer.currentText()  # type: ignore[assignment]
+        cfg.train.with_viewer = self.brush_viewer_cb.isChecked()
         cfg.refine.enabled = self.refine_cb.isChecked()
         cfg.export.streamed_lod = self.lod_cb.isChecked()
         cfg.package.cloud_manifest = self.cloud_cb.isChecked()
@@ -966,6 +1023,8 @@ class MainWindow(QMainWindow):
         self.log.append(f"Stages: {', '.join(cfg.stages)}")
         if cfg.skip_existing:
             self.log.append("skip_existing=on — finished tiles/artifacts will be reused")
+        self.viewer.set_job_root(cfg.work_dir())
+        self.viewer.start_live()
         self.thread = QThread()
         self.worker = Worker(cfg, self.controller)
         self.worker.moveToThread(self.thread)
@@ -1016,6 +1075,8 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(int(ev.overall_frac * 1000))
         self._update_stage_bars(ev)
         self._refresh_eta()
+        if not ev.quiet or ev.status == "finished":
+            self.viewer.on_stage_progress(ev.stage, ev.status)
 
     def _refresh_eta(self) -> None:
         ev = self._last_event
@@ -1058,6 +1119,7 @@ class MainWindow(QMainWindow):
         self.pause_btn.setText("Pause")
         self.stop_btn.setEnabled(False)
         self._paused = False
+        self.viewer.refresh(force=True)
         if ok:
             self.status_label.setText("Finished")
             self.progress_bar.setValue(1000)
@@ -1076,6 +1138,7 @@ class MainWindow(QMainWindow):
 
 
 def launch() -> None:
+    configure_default_surface_format()
     app = QApplication(sys.argv)
     app.setApplicationName("InstaSplat")
     app.setStyle("Fusion")

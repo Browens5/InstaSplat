@@ -35,6 +35,7 @@ from instasplat.config import PipelineConfig
 from instasplat.pipeline import Pipeline
 from instasplat.utils.control import RunController
 from instasplat.utils.deps import report_dict
+from instasplat.utils.jobs import inspect_job, is_job_dir, load_job_config
 from instasplat.utils.progress import ProgressEvent, format_duration
 from instasplat.utils.stages import ALL_STAGES, SINGLE_STAGES, STAGE_HELP, TILED_STAGES
 
@@ -77,6 +78,15 @@ QLabel#stageName {
 QLabel#stageHelp {
   color: #8a8070;
   font-size: 11px;
+}
+QLabel#jobBanner {
+  color: #c4b896;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 10px;
+  background: #252018;
+  border: 1px solid #4a3f32;
+  border-radius: 6px;
 }
 QGroupBox {
   border: 1px solid #3d3428;
@@ -344,6 +354,8 @@ class MainWindow(QMainWindow):
         self._last_event: ProgressEvent | None = None
         self._paused = False
         self._run_stages: list[str] = []
+        self._job_dir: Path | None = None
+        self._suppress_stage_reset = False
         self.stage_rows: dict[str, StageRow] = {}
 
         shell = QWidget()
@@ -374,6 +386,28 @@ class MainWindow(QMainWindow):
         form_box = QGroupBox("Capture")
         form = QFormLayout(form_box)
         form.setSpacing(10)
+
+        open_row = QHBoxLayout()
+        self.open_job_btn = QPushButton("Open previous run…")
+        self.open_job_btn.setObjectName("secondary")
+        self.open_job_btn.setToolTip(
+            "Load an existing job folder (config.yaml or 00_ingest) to continue"
+        )
+        self.open_job_btn.clicked.connect(self._open_previous_run)
+        self.clear_job_btn = QPushButton("New project")
+        self.clear_job_btn.setObjectName("secondary")
+        self.clear_job_btn.setEnabled(False)
+        self.clear_job_btn.clicked.connect(self._clear_opened_job)
+        open_row.addWidget(self.open_job_btn)
+        open_row.addWidget(self.clear_job_btn)
+        open_row.addStretch(1)
+        form.addRow("Continue", open_row)
+
+        self.job_banner = QLabel("New project — choose an input below, or open a previous run.")
+        self.job_banner.setObjectName("jobBanner")
+        self.job_banner.setWordWrap(True)
+        form.addRow(self.job_banner)
+
         self.input_edit = QLineEdit()
         self.input_edit.setPlaceholderText("Select .insv or stitched equirect .mp4")
         browse = QPushButton("Browse")
@@ -465,7 +499,10 @@ class MainWindow(QMainWindow):
         stages_box = QGroupBox("Pipeline stages")
         stages_layout = QVBoxLayout(stages_box)
         stages_layout.setSpacing(4)
-        hint = QLabel("Check the stages to run. Progress fills per task while the pipeline runs.")
+        hint = QLabel(
+            "Check the stages to run. Opening a previous run pre-checks remaining work "
+            "(skip_existing keeps finished tiles/artifacts)."
+        )
         hint.setObjectName("tagline")
         hint.setWordWrap(True)
         stages_layout.addWidget(hint)
@@ -491,8 +528,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(stages_box)
 
         note = QLabel(
-            "Pause freezes the pipeline between stages and SIGSTOP's Brush/OpenSplat training. "
-            "Resume continues; Stop terminates the run. "
+            "Open previous run loads a job folder so you can continue. "
+            "Pause freezes a live run (Unpause resumes); Stop terminates it. "
             "See docs/MAC_LONG_360.md."
         )
         note.setWordWrap(True)
@@ -559,6 +596,7 @@ class MainWindow(QMainWindow):
         self.pause_btn.setObjectName("warning")
         self.pause_btn.setEnabled(False)
         self.pause_btn.clicked.connect(self._toggle_pause)
+        # Live freeze/unfreeze — not the same as "continue previous project"
         self.stop_btn = QPushButton("Stop")
         self.stop_btn.setObjectName("danger")
         self.stop_btn.setEnabled(False)
@@ -596,9 +634,116 @@ class MainWindow(QMainWindow):
             self.input_edit.setText(path)
 
     def _browse_output(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Select output directory")
+        start = self.output_edit.text().strip() or str(Path.cwd() / "runs")
+        path = QFileDialog.getExistingDirectory(self, "Select output directory", start)
         if path:
             self.output_edit.setText(path)
+
+    def _open_previous_run(self) -> None:
+        start = self.output_edit.text().strip() or str(Path.cwd() / "runs")
+        path = QFileDialog.getExistingDirectory(
+            self,
+            "Open previous InstaSplat run (job folder)",
+            start,
+        )
+        if not path:
+            return
+        job = Path(path)
+        # If user picked the runs/ parent, ask them to pick a project subfolder
+        if not is_job_dir(job):
+            QMessageBox.warning(
+                self,
+                "InstaSplat",
+                "Select a job folder (contains config.yaml or 00_ingest/), "
+                "not the parent runs/ directory.",
+            )
+            return
+        try:
+            info = inspect_job(job)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "InstaSplat", str(exc))
+            return
+        self._apply_job(info)
+
+    def _apply_job(self, info) -> None:
+        self._job_dir = info.job_dir
+        self._suppress_stage_reset = True
+        try:
+            self._apply_config_to_form(info.config)
+            self._set_checked_stages(info.suggested_stages)
+        finally:
+            self._suppress_stage_reset = False
+        self.clear_job_btn.setEnabled(True)
+        self.run_btn.setText("Continue run")
+        detail = " · ".join(info.details[:4])
+        self.job_banner.setText(
+            f"Continuing {info.job_dir.name} ({info.mode_label})"
+            + (
+                f" — tiles {info.tiles_done}/{info.tiles_total}"
+                if info.tiled and info.tiles_total
+                else ""
+            )
+            + f"\nSuggested: {', '.join(info.suggested_stages)}"
+            + (f"\n{detail}" if detail else "")
+        )
+        self.status_label.setText(f"Opened job — {info.summary}")
+        self.log.append(f"Opened previous run: {info.job_dir}")
+        for line in info.details:
+            self.log.append(f"  · {line}")
+        self.log.append(f"Suggested stages: {', '.join(info.suggested_stages)}")
+
+    def _clear_opened_job(self) -> None:
+        self._job_dir = None
+        self.clear_job_btn.setEnabled(False)
+        self.run_btn.setText("Run pipeline")
+        self.job_banner.setText(
+            "New project — choose an input below, or open a previous run."
+        )
+        self.status_label.setText("Idle")
+        self._select_mode_stages()
+        self.log.append("Cleared opened job — starting a new project")
+
+    def _apply_config_to_form(self, cfg: PipelineConfig) -> None:
+        inp = cfg.input_path
+        video = cfg.work_dir() / "00_ingest" / "equirect.mp4"
+        if video.exists():
+            self.input_edit.setText(str(video))
+        elif inp.exists():
+            self.input_edit.setText(str(inp))
+        else:
+            self.input_edit.setText(str(inp))
+        self.output_edit.setText(str(cfg.output_dir))
+        self.name_edit.setText(cfg.project_name)
+        tiled = cfg.mode == "tiled" or cfg.chunk.enabled
+        self.large_8k_cb.setChecked(tiled)
+        if tiled:
+            self.fps.setValue(float(cfg.chunk.base_fps))
+        else:
+            self.fps.setValue(float(cfg.extract.fps))
+        self.mask_cb.setChecked(bool(cfg.mask.enabled))
+        idx = self.trainer.findText(cfg.train.backend)
+        if idx >= 0:
+            self.trainer.setCurrentIndex(idx)
+        self.refine_cb.setChecked(bool(cfg.refine.enabled))
+        self.lod_cb.setChecked(bool(cfg.export.streamed_lod))
+        self.cloud_cb.setChecked(
+            bool(cfg.package.cloud_manifest or cfg.package.quality_report)
+        )
+        idx = self.sfm_mode.findText(cfg.sfm.mode)
+        if idx >= 0:
+            self.sfm_mode.setCurrentIndex(idx)
+        idx = self.scale_mode.findText(cfg.scale.mode)
+        if idx >= 0:
+            self.scale_mode.setCurrentIndex(idx)
+        self.steps.setValue(int(cfg.train.total_steps))
+        wanted = set(cfg.export.formats or [])
+        for fmt, cb in self.format_cbs.items():
+            cb.setChecked(fmt in wanted)
+
+    def _set_checked_stages(self, stages: list[str]) -> None:
+        wanted = set(stages)
+        for name, row in self.stage_rows.items():
+            row.set_checked(name in wanted)
 
     def _doctor(self) -> None:
         data = report_dict()
@@ -631,6 +776,8 @@ class MainWindow(QMainWindow):
             self.install_brush_btn.setEnabled(True)
 
     def _select_mode_stages(self) -> None:
+        if self._suppress_stage_reset:
+            return
         wanted = set(TILED_STAGES if self.large_8k_cb.isChecked() else SINGLE_STAGES)
         for name, row in self.stage_rows.items():
             row.set_checked(name in wanted)
@@ -700,26 +847,59 @@ class MainWindow(QMainWindow):
             self.task_progress.setValue(int(cur_frac * 1000) if ev.status != "finished" else 1000)
 
     def _build_config(self) -> PipelineConfig:
-        inp = Path(self.input_edit.text().strip())
-        if not self.input_edit.text().strip():
-            raise ValueError("Choose an input file")
         formats = [fmt for fmt, cb in self.format_cbs.items() if cb.isChecked()]
         if not formats:
             formats = ["ply", "sog"]
         stages = self._selected_stages()
         if not stages:
             raise ValueError("Select at least one pipeline stage")
-        cfg = PipelineConfig(
-            input_path=inp,
-            output_dir=Path(self.output_edit.text().strip() or "./runs"),
-            project_name=self.name_edit.text().strip() or "instasplat_job",
-        )
+
+        if self._job_dir is not None:
+            cfg = load_job_config(self._job_dir)
+            # Keep job identity unless user edited project/output
+            out = Path(self.output_edit.text().strip() or str(cfg.output_dir))
+            name = self.name_edit.text().strip() or cfg.project_name
+            cfg.output_dir = out
+            cfg.project_name = name
+            # Re-bind to opened folder if name/output still point at it
+            if (out / name).resolve() != self._job_dir.resolve():
+                # User moved project identity — still OK, but warn in log later
+                pass
+        else:
+            inp_text = self.input_edit.text().strip()
+            if not inp_text:
+                raise ValueError("Choose an input file, or open a previous run")
+            cfg = PipelineConfig(
+                input_path=Path(inp_text),
+                output_dir=Path(self.output_edit.text().strip() or "./runs"),
+                project_name=self.name_edit.text().strip() or "instasplat_job",
+            )
+            if self.large_8k_cb.isChecked():
+                cfg.enable_mac_long_360_defaults()
+
+        inp_text = self.input_edit.text().strip()
+        if inp_text:
+            cfg.input_path = Path(inp_text)
+        elif not cfg.input_path.exists():
+            video = cfg.work_dir() / "00_ingest" / "equirect.mp4"
+            if video.exists():
+                cfg.input_path = video
+            else:
+                raise ValueError("Choose an input file (or open a job with ingested video)")
+
         if self.large_8k_cb.isChecked():
-            cfg.enable_mac_long_360_defaults()
+            if cfg.mode != "tiled" and self._job_dir is None:
+                cfg.enable_mac_long_360_defaults()
+            cfg.mode = "tiled"
+            cfg.chunk.enabled = True
             cfg.chunk.base_fps = float(self.fps.value())
         else:
+            cfg.mode = "single"
+            cfg.chunk.enabled = False
             cfg.extract.fps = float(self.fps.value())
+
         cfg.stages = stages
+        cfg.skip_existing = True
         cfg.mask.enabled = self.mask_cb.isChecked()
         cfg.train.backend = self.trainer.currentText()  # type: ignore[assignment]
         cfg.refine.enabled = self.refine_cb.isChecked()
@@ -750,9 +930,12 @@ class MainWindow(QMainWindow):
         self.pause_btn.setEnabled(True)
         self.pause_btn.setText("Pause")
         self.stop_btn.setEnabled(True)
-        self.status_label.setText("Starting…")
-        self.log.append(f"Starting job → {cfg.work_dir()}")
+        action = "Continuing" if self._job_dir is not None else "Starting"
+        self.status_label.setText(f"{action}…")
+        self.log.append(f"{action} job → {cfg.work_dir()}")
         self.log.append(f"Stages: {', '.join(cfg.stages)}")
+        if cfg.skip_existing:
+            self.log.append("skip_existing=on — finished tiles/artifacts will be reused")
         self.thread = QThread()
         self.worker = Worker(cfg, self.controller)
         self.worker.moveToThread(self.thread)
@@ -767,15 +950,15 @@ class MainWindow(QMainWindow):
         if not self._paused:
             self.controller.pause()
             self._paused = True
-            self.pause_btn.setText("Resume")
+            self.pause_btn.setText("Unpause")
             self.status_label.setText("Paused — pipeline + training frozen")
             self.log.append("⏸ Paused (stages wait; Brush/OpenSplat SIGSTOP)")
         else:
             self.controller.resume()
             self._paused = False
             self.pause_btn.setText("Pause")
-            self.status_label.setText("Resumed")
-            self.log.append("▶ Resumed")
+            self.status_label.setText("Unpaused")
+            self.log.append("▶ Unpaused")
 
     def _stop(self) -> None:
         self.controller.stop()

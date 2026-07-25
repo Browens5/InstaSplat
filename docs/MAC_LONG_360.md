@@ -25,13 +25,26 @@ Studio equirect MP4 (+ sibling INSV / gyro+gps CSV)
 instasplat doctor          # confirm mac_long_360=yes
 instasplat install-brush   # once — clones + cargo build --release
 instasplat mac-360 -i ./capture_equirect_8k.mp4 -o ./runs -n walk_360
-# GUI: Pause freezes stages + SIGSTOPs Brush; Resume / Stop also available
+# GUI: Pause freezes stages + SIGSTOPs Brush; Unpause / Stop also available
 
 # Resume-safe: re-run skips tiles that already have scene.ply
 instasplat mac-360 -i ./capture_equirect_8k.mp4 -o ./runs -n walk_360
 ```
 
 Aliases: `instasplat run --large-8k ...` and `instasplat run --tiled ...`.
+
+## Continue a previous project
+
+```bash
+# CLI — load job folder and run only remaining work
+instasplat run --job ./runs/walk_360 --only process_chunks
+instasplat run --job ./runs/walk_360 --from align_chunks --to package
+```
+
+**GUI:** **Open previous run…** → select `runs/walk_360` (the job folder with
+`config.yaml` or `00_ingest/`). Settings reload, remaining stages are
+pre-checked, then click **Continue run**. Finished tiles/artifacts are skipped
+(`skip_existing`). Use **New project** to clear and start fresh.
 
 ## Run sections individually
 
@@ -43,7 +56,7 @@ instasplat run --job ./runs/walk_360 --from merge_chunks --to package
 instasplat validate --job ./runs/walk_360
 ```
 
-GUI: multi-select **Stages** before Run (use “All for mode” to reset).
+GUI: check **Stages** before Run (use “All for mode” to reset).
 
 ## Inputs that work best
 

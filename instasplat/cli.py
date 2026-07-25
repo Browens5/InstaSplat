@@ -317,17 +317,9 @@ def mac_360(
 
 def _load_job_config(job: Path) -> PipelineConfig:
     """Load an existing job's config.yaml (or synthesize a minimal one)."""
-    job = job.resolve()
-    cfg_path = job / "config.yaml"
-    if cfg_path.exists():
-        cfg = PipelineConfig.load(cfg_path)
-        cfg.output_dir = job.parent
-        cfg.project_name = job.name
-        return cfg
-    # Fallback: point at job video if present
-    video = job / "00_ingest" / "equirect.mp4"
-    inp = video if video.exists() else job
-    return PipelineConfig(input_path=inp, output_dir=job.parent, project_name=job.name)
+    from instasplat.utils.jobs import load_job_config
+
+    return load_job_config(job)
 
 
 def _build_run_config(

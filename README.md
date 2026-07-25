@@ -25,13 +25,16 @@ instasplat gui
 | `ingest` | Resolve video source, parse INSV trailer (gyro/accel/GPS) | exiftool, custom trailer parser |
 | `extract` | Sample frames at N fps | ffmpeg |
 | `mask` | Segment people → Brush/COLMAP ignore masks | Ultralytics YOLO (**MPS / Metal**) |
-| `sfm` | Cubemap (or equirect) views → sparse cloud + poses | COLMAP |
+| `sfm` | Cubemap (or equirect) views → sparse cloud + poses | COLMAP (+ gyro/GPS fallback) |
+| `refine` | Bundle adjust + GPS/gyro pose blend | COLMAP BA |
 | `scale` | Optional metric scale | known distance / GPS |
-| `train` | 3D Gaussian splat training | [Brush](https://github.com/ArthurBrussee/brush) (**Metal/WebGPU**) |
+| `train` | 3D Gaussian splat training | Brush or OpenSplat (**Metal**) |
 | `export` | Format conversion + transforms | [splat-transform](https://github.com/playcanvas/splat-transform) |
+| `package` | Nerfstudio / hierarchy / cloud_job / quality | local packaging |
 | `plan_chunks` / `process_chunks` / `align_chunks` / `merge_chunks` | **Large 8K tiled mode** | gyro/GPS + Metal |
 
 Outputs land under `runs/<project>/06_export/` (`scene.ply`, `scene.sog`, …).
+Large jobs also write `quality.json`, `cloud_job.json`, and optional CPU LOD previews.
 
 ### Large 8K@30fps (tiled)
 
@@ -45,6 +48,11 @@ See **[docs/LARGE_8K.md](docs/LARGE_8K.md)**.
 
 Trainer backends: `--trainer brush` (default) or `--trainer opensplat` (C++ Metal MPS).
 Exports for large jobs default to `.ply`, `.sog`, and `.spz`.
+
+```bash
+# Inspect an existing job (overlap / speed / align RMSE)
+instasplat validate --job ./runs/walk_8k
+```
 
 ## macOS stitching reality check
 

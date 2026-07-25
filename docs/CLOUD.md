@@ -91,9 +91,30 @@ People masking exists partly for privacy. If you cloud-process:
 - Use a VPC/private worker and delete frames after job completion
 - Document retention in any product ToS
 
-## Wiring cloud into this repo later
+## Cloud job manifest (implemented)
 
-Suggested extension points (not implemented yet):
+After `package`, large jobs write `cloud_job.json` at the job root:
+
+```bash
+instasplat run --large-8k -i ./capture.mp4 -o ./runs -n walk_8k
+# → runs/walk_8k/cloud_job.json
+# → runs/walk_8k/07_nerfstudio/transforms.json
+# → runs/walk_8k/11_merged/hierarchy_manifest.json
+# → runs/walk_8k/quality.json
+```
+
+Recommended backends in the manifest:
+
+| Backend | When to use |
+|---------|-------------|
+| `gsplat_3dgut` | Native equirect / fisheye training (skip cubemap) |
+| `lichtfeld` | CUDA MCMC / workstation-grade train + export |
+| `nerfstudio_splatfacto` | Use packaged `transforms.json` |
+| `hierarchical_merge_cuda` | Kerbl hierarchy merger on tile anchors |
+
+Disable with `--no-cloud-manifest` / `--no-quality`.
+
+## Still to wire
 
 1. `PipelineConfig.execution_backend: local | ssh | http`
 2. `stages/remote.py` that rsyncs `JobPaths` folders and runs `instasplat run --stages ...`

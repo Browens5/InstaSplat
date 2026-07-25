@@ -56,8 +56,18 @@ runs/<job>/
   10_chunks/chunk_XXX/...
   10_chunks/alignments.json
   11_merged/scene_merged.ply
+  11_merged/hierarchy_manifest.json
+  11_merged/lod/lod_levels.json      # CPU preview LODs
+  07_nerfstudio/transforms.json
   06_export/scene.ply
   06_export/scene.sog
+  06_export/scene.spz
+  quality.json
+  cloud_job.json                     # 3DGUT / LichtFeld worker handoff
+```
+
+```bash
+instasplat validate --job ./runs/walk_8k   # capture / align health grade
 ```
 
 ## Tuning for “use as much data as possible”

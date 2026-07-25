@@ -45,6 +45,18 @@ export:
   formats: [ply, sog, spz]
   filter_nan: true
   min_opacity: 0.05
-  streamed_lod: false
+  streamed_lod: true
 
-stages: [ingest, plan_chunks, process_chunks, align_chunks, merge_chunks]
+refine:
+  enabled: true
+  pose_blend: 0.25
+  max_align_rmse_m: 8.0
+
+package:
+  nerfstudio: true
+  hierarchy_manifest: true
+  cpu_lod: true
+  cloud_manifest: true
+  quality_report: true
+
+stages: [ingest, plan_chunks, process_chunks, align_chunks, merge_chunks, package]

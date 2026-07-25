@@ -113,6 +113,10 @@ def run(
     streamed_lod: bool = typer.Option(
         False, "--streamed-lod", help="Also export lod-meta.json streamed SOG"
     ),
+    no_cloud_manifest: bool = typer.Option(
+        False, "--no-cloud-manifest", help="Skip writing cloud_job.json"
+    ),
+    no_quality: bool = typer.Option(False, "--no-quality", help="Skip quality.json report"),
 ) -> None:
     """Run the reconstruction pipeline."""
     if config is not None:
@@ -140,6 +144,10 @@ def run(
         cfg.refine.enabled = False
     if streamed_lod:
         cfg.export.streamed_lod = True
+    if no_cloud_manifest:
+        cfg.package.cloud_manifest = False
+    if no_quality:
+        cfg.package.quality_report = False
     if stages:
         cfg.stages = [s.strip() for s in stages.split(",") if s.strip()]
     if fps is not None:
@@ -172,9 +180,72 @@ def run(
         if result.tiled and result.tiled.chunk_results:
             ok = sum(1 for v in result.tiled.chunk_results.values() if v)
             console.print(f"  chunks ok: {ok}/{len(result.tiled.chunk_results)}")
+        if result.package and result.package.quality_report:
+            console.print(f"  quality: {result.package.quality_report}")
+        if result.package and result.package.cloud_job:
+            console.print(f"  cloud job: {result.package.cloud_job}")
     else:
         console.print(f"[red]Failed[/red]: {result.error}")
         raise typer.Exit(code=1)
+
+
+@app.command("validate")
+def validate(
+    job: Path | None = typer.Option(
+        None, "--job", "-j", help="Existing job directory with ingest/chunks"
+    ),
+    overlap_sec: float = typer.Option(5.0, help="Planned chunk overlap (seconds)"),
+    chunk_duration_sec: float = typer.Option(25.0, help="Planned chunk duration"),
+    base_fps: float = typer.Option(6.0, help="Planned base sample FPS"),
+) -> None:
+    """Check capture / tile health and print a quality report (no training)."""
+    from instasplat.utils.paths import JobPaths
+    from instasplat.utils.quality import build_quality_report, validate_capture
+
+    if job is None:
+        raise typer.BadParameter("Provide --job pointing at a run directory")
+    paths = JobPaths(job)
+    cfg = PipelineConfig(
+        input_path=paths.video if paths.video.exists() else job,
+        output_dir=job.parent,
+        project_name=job.name,
+    )
+    cfg.chunk.overlap_sec = overlap_sec
+    cfg.chunk.duration_sec = chunk_duration_sec
+    cfg.chunk.base_fps = base_fps
+    if (job / "config.yaml").exists():
+        try:
+            cfg = PipelineConfig.load(job / "config.yaml")
+        except Exception:  # noqa: BLE001
+            pass
+
+    report = build_quality_report(cfg, paths)
+    # Also surface standalone capture issues even without manifest
+    if not (paths.chunks / "manifest.json").exists():
+        extra = validate_capture(
+            duration_sec=0.0,
+            overlap_sec=cfg.chunk.overlap_sec,
+            chunk_duration_sec=cfg.chunk.duration_sec,
+            min_overlap_ratio=cfg.chunk.min_overlap_ratio,
+            base_fps=cfg.chunk.base_fps,
+            gyro_csv=paths.gyro_csv if paths.gyro_csv.exists() else None,
+            gps_csv=paths.gps_csv if paths.gps_csv.exists() else None,
+        )
+        report.issues.extend(extra)
+
+    console.print(f"[bold]Grade[/bold]: {report.grade} (score {report.score:.0f})")
+    for issue in report.issues:
+        color = {"error": "red", "warn": "yellow", "info": "cyan"}.get(issue.level, "white")
+        console.print(f"  [{color}]{issue.level}[/{color}] {issue.code}: {issue.message}")
+    if report.metrics:
+        console.print("[bold]Metrics[/bold]")
+        for k, v in report.metrics.items():
+            console.print(f"  {k}: {v}")
+    out = job / "quality.json"
+    report.save(out)
+    console.print(f"Wrote {out}")
+    if report.grade == "poor":
+        raise typer.Exit(code=2)
 
 
 @app.command("gui")

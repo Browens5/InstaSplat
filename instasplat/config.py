@@ -129,6 +129,12 @@ class PackageConfig:
     nerfstudio: bool = True
     copy_images: bool = False
     hierarchy_manifest: bool = True
+    # CPU XYZ+opacity LOD previews from tile anchors (no CUDA Kerbl merger)
+    cpu_lod: bool = True
+    # Portable cloud_job.json for 3DGUT / LichtFeld / splatfacto workers
+    cloud_manifest: bool = True
+    # Always write quality.json after package
+    quality_report: bool = True
 
 
 @dataclass
@@ -249,6 +255,9 @@ class PipelineConfig:
         self.refine.pose_blend = 0.25
         self.package.nerfstudio = True
         self.package.hierarchy_manifest = True
+        self.package.cpu_lod = True
+        self.package.cloud_manifest = True
+        self.package.quality_report = True
         self.sfm.telemetry_fallback = True
         if self.scale.mode == "none":
             self.scale.mode = "gps"
@@ -382,7 +391,18 @@ export:
   streamed_lod: false
   splat_transform_bin: splat-transform
 
-stages: [ingest, plan_chunks, process_chunks, align_chunks, merge_chunks]
+refine:
+  enabled: true
+  pose_blend: 0.25
+
+package:
+  nerfstudio: true
+  hierarchy_manifest: true
+  cpu_lod: true
+  cloud_manifest: true
+  quality_report: true
+
+stages: [ingest, plan_chunks, process_chunks, align_chunks, merge_chunks, package]
 skip_existing: true
 """
 
@@ -435,7 +455,14 @@ export:
   formats: [ply, sog, spz]
   filter_nan: true
   min_opacity: 0.05
-  streamed_lod: false
+  streamed_lod: true
 
-stages: [ingest, plan_chunks, process_chunks, align_chunks, merge_chunks]
+package:
+  nerfstudio: true
+  hierarchy_manifest: true
+  cpu_lod: true
+  cloud_manifest: true
+  quality_report: true
+
+stages: [ingest, plan_chunks, process_chunks, align_chunks, merge_chunks, package]
 """

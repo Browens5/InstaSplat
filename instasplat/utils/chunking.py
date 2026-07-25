@@ -156,6 +156,12 @@ def plan_chunks(
             t += step
         strategy = "temporal"
 
+    overlap_ratio = overlap_sec / max(chunk_duration_sec, 1e-6)
+    if overlap_ratio < 0.15:
+        notes.append(
+            f"overlap_ratio={overlap_ratio:.2f} is low; prefer >=0.15 for tile align"
+        )
+
     chunks: list[ChunkPlan] = []
     for i, (start, end) in enumerate(boundaries):
         local_dur = max(0.0, end - start)
@@ -171,6 +177,8 @@ def plan_chunks(
             idx = np.linspace(0, len(times) - 1, max_frames_per_chunk).astype(int)
             times = times[idx]
             notes.append(f"chunk {i:03d} capped to {max_frames_per_chunk} frames")
+        if len(times) < 12:
+            notes.append(f"chunk {i:03d} has only {len(times)} frames (SfM risk)")
         gps_start = gps_end = plen = None
         if gps is not None:
             from instasplat.utils.telemetry import interpolate_xyz
@@ -178,6 +186,10 @@ def plan_chunks(
             gps_start = interpolate_xyz(gps, start).tolist()
             gps_end = interpolate_xyz(gps, end).tolist()
             plen = path_length_m(gps, start, end)
+            if plen is not None and local_dur > 1.0 and plen / local_dur > 2.5:
+                notes.append(
+                    f"chunk {i:03d} mean speed ~{plen / local_dur:.1f} m/s (fast)"
+                )
         chunks.append(
             ChunkPlan(
                 chunk_id=f"chunk_{i:03d}",

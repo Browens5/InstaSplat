@@ -21,6 +21,9 @@ class PackageResult:
     nerfstudio_dir: Path | None
     hierarchy_manifest: Path | None
     notes: list[str]
+    cloud_job: Path | None = None
+    lod_manifest: Path | None = None
+    quality_report: Path | None = None
 
 
 def _read_cameras_txt(path: Path) -> dict[int, dict]:
@@ -217,6 +220,9 @@ def run_package(cfg: PipelineConfig, paths: JobPaths, model_dir: Path) -> Packag
     notes: list[str] = []
     ns_dir = None
     hier = None
+    cloud_job = None
+    lod_manifest = None
+    quality_path = None
 
     if cfg.package.nerfstudio:
         ns_dir = paths.root / "07_nerfstudio"
@@ -246,4 +252,35 @@ def run_package(cfg: PipelineConfig, paths: JobPaths, model_dir: Path) -> Packag
             notes.append("hierarchy_manifest")
             log.info("Wrote hierarchy manifest → %s", hier)
 
-    return PackageResult(ns_dir, hier, notes)
+    if cfg.package.cpu_lod and hier is not None and hier.exists() and not cfg.dry_run:
+        from instasplat.utils.hierarchy import run_hierarchy_lod
+
+        lod = run_hierarchy_lod(cfg, paths)
+        if lod is not None:
+            lod_manifest = lod.lod_manifest
+            notes.append("cpu_lod")
+
+    if cfg.package.cloud_manifest:
+        from instasplat.utils.cloud import run_cloud_manifest
+
+        cj = run_cloud_manifest(cfg, paths)
+        if cj is not None:
+            cloud_job = cj.manifest_path
+            notes.append("cloud_job")
+
+    if cfg.package.quality_report:
+        from instasplat.utils.quality import run_quality
+
+        report = run_quality(cfg, paths)
+        quality_path = paths.root / "quality.json"
+        notes.append(f"quality:{report.grade}")
+        log.info("Quality grade=%s score=%.1f", report.grade, report.score)
+
+    return PackageResult(
+        ns_dir,
+        hier,
+        notes,
+        cloud_job=cloud_job,
+        lod_manifest=lod_manifest,
+        quality_report=quality_path,
+    )

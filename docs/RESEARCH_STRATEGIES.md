@@ -107,9 +107,13 @@ InstaSplat’s Mac-local, tiled 8K pipeline.
 6. Robust tile align: RANSAC Umeyama + ICP + RMSE quality gate.
 7. Telemetry pose fallback when COLMAP fails.
 8. Nerfstudio `transforms.json` + hierarchy anchor manifest packaging.
+9. Capture validation + `quality.json` grade (overlap / speed / align RMSE).
+10. `cloud_job.json` for 3DGUT / LichtFeld / splatfacto workers.
+11. CPU LOD previews from hierarchy anchors (XYZ+opacity; Kerbl CUDA still cloud).
 
 ### Next
-1. **Native equirect training** via cloud 3DGUT/gsplat when MediaSDK stitch is imperfect.
+1. **Native equirect training** via cloud 3DGUT/gsplat when MediaSDK stitch is imperfect
+   (manifest ready; worker runner TBD).
 2. **Kerbl hierarchy merger** binary integration for true LOD trees.
 3. **MASt3R / on-the-fly** learned pose init (beyond gyro/GPS prior).
 4. Full Self-Cali distortion network (iResNet) for raw fisheye.

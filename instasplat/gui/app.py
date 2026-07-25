@@ -194,6 +194,10 @@ class MainWindow(QMainWindow):
         self.lod_cb.setChecked(True)
         opts_form.addRow(self.lod_cb)
 
+        self.cloud_cb = QCheckBox("Write cloud_job.json + quality.json packaging")
+        self.cloud_cb.setChecked(True)
+        opts_form.addRow(self.cloud_cb)
+
         self.sfm_mode = QComboBox()
         self.sfm_mode.addItems(["perspective_cubemap", "equirectangular", "auto"])
         opts_form.addRow("SfM mode", self.sfm_mode)
@@ -288,6 +292,9 @@ class MainWindow(QMainWindow):
         cfg.train.backend = self.trainer.currentText()  # type: ignore[assignment]
         cfg.refine.enabled = self.refine_cb.isChecked()
         cfg.export.streamed_lod = self.lod_cb.isChecked()
+        cfg.package.cloud_manifest = self.cloud_cb.isChecked()
+        cfg.package.quality_report = self.cloud_cb.isChecked()
+        cfg.package.cpu_lod = self.cloud_cb.isChecked()
         cfg.sfm.mode = self.sfm_mode.currentText()  # type: ignore[assignment]
         cfg.scale.mode = self.scale_mode.currentText()  # type: ignore[assignment]
         cfg.train.total_steps = int(self.steps.value())

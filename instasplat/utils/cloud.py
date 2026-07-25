@@ -40,7 +40,7 @@ def write_cloud_job_manifest(
     """
     Write a portable cloud job description for CUDA workers.
 
-    Local Mac keeps Brush/OpenSplat; cloud workers can pick up the Nerfstudio
+    Local Mac keeps metal_equirect; cloud workers can pick up the Nerfstudio
     package or hierarchy anchors for 3DGUT / LichtFeld / Kerbl hierarchy merge.
     """
     out_path = out_path or (paths.root / "cloud_job.json")

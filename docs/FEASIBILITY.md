@@ -2,7 +2,7 @@
 
 ## Verdict
 
-**Feasible as a local Mac application**, with one hard caveat: **high-quality INSV stitching is not natively available via Insta360 MediaSDK on macOS**. Everything after a stitched equirectangular MP4 (frames, YOLO masks, COLMAP, Brush, splat-transform) runs well on Apple Silicon. For a polished product, treat stitching as either **Studio-assisted** or **cloud/Linux MediaSDK**.
+**Feasible as a local Mac application**, with one hard caveat: **high-quality INSV stitching is not natively available via Insta360 MediaSDK on macOS**. Everything after a stitched equirectangular MP4 (frames, YOLO masks, COLMAP, metal_equirect, splat-transform) runs well on Apple Silicon. For a polished product, treat stitching as either **Studio-assisted** or **cloud/Linux MediaSDK**.
 
 ## Stage-by-stage
 
@@ -23,7 +23,7 @@
 | Aspect | Assessment |
 |--------|------------|
 | Runtime | Ultralytics YOLO-seg on **MPS** is practical for 2–5 fps extractions |
-| Integration | Brush supports a `masks/` folder; COLMAP accepts mask paths during feature extraction |
+| Integration | metal_equirect supports equirect masks; COLMAP accepts mask paths during feature extraction |
 | Quality | Works for tourists/operators; fails on heavy occlusion, mirrors, tiny distant figures |
 | License | Ultralytics YOLO licensing must be reviewed for commercial redistribution |
 
@@ -40,7 +40,7 @@
 
 **Risk:** Long walking videos need frame decimation + sequential matching; exhaustive matching does not scale.
 
-### 4. Brush training (Mac-native advantage)
+### 4. metal_equirect training (Mac-native)
 
 | Aspect | Assessment |
 |--------|------------|
@@ -74,7 +74,7 @@ Without one of these, the splat looks right but is **not** metrically true.
 
 ## Hardware expectations (Apple Silicon)
 
-| Capture | Extract @ 2 fps | YOLO | COLMAP | Brush 30k steps |
+| Capture | Extract @ 2 fps | YOLO | COLMAP | metal_equirect 15k steps |
 |---------|-----------------|------|--------|-----------------|
 | 30 s, 5.7K | Light | Light | Moderate | Moderate (M-series GPU) |
 | 5 min walk, 8K | Heavy disk | Heavy | Heavy CPU | Heavy; may prefer cloud |
@@ -82,21 +82,21 @@ Without one of these, the splat looks right but is **not** metrically true.
 
 Rough local sweet spot: **short clips**, **2 fps or less**, **≤ ~200–400 training views** after cubemap expansion (remember: 1 equirect × 6 faces).
 
-For **long 8K@30** captures, use **tiled mode** (`--large-8k`): overlapping temporal chunks, gyro-adaptive sampling (≈6–15 fps), per-tile Brush on Metal, GPS/gyro Sim3 alignment, splat-transform merge. See `docs/LARGE_8K.md`.
+For **long 8K@30** captures, use **tiled mode** (`--large-8k`): overlapping temporal chunks, gyro-adaptive sampling (≈6–15 fps), per-tile metal_equirect on MPS, GPS/gyro Sim3 alignment, splat-transform merge. See `docs/LARGE_8K.md`.
 
 ## Product architecture recommendation
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │ Mac app (InstaSplat)                                    │
-│  UI + orchestration + YOLO + Brush + splat-transform    │
+│  UI + orchestration + YOLO + metal_equirect + splat-transform │
 └───────────────┬───────────────────────────┬─────────────┘
                 │                           │
         Studio / local MP4           Optional cloud worker
                 │                     (MediaSDK + COLMAP)
                 └────────────┬──────────────┘
                              ▼
-                      Brush train (local or GPU cloud)
+                      metal_equirect (local) or gsplat (cloud)
                              ▼
                       splat-transform exports
 ```
@@ -112,8 +112,8 @@ For **long 8K@30** captures, use **tiled mode** (`--large-8k`): overlapping temp
 | Frames | ffmpeg | Ubiquitous |
 | Telemetry | Custom trailer parser + exiftool | No official Mac SDK needed |
 | People masks | YOLO-seg | Fast, MPS-friendly |
-| SfM | COLMAP | Brush-compatible cameras/points |
-| Splats | Brush | Native Mac training |
+| SfM | COLMAP | COLMAP cameras/points for training |
+| Splats | metal_equirect | Native Mac equirect training |
 | Export | splat-transform | `.sog` / `.ply` / more |
 
 Alternatives worth knowing: nerfstudio/gsplat (CUDA-centric), SphereSfM, OpenMVG spherical, Postshot (not open), Lichtfeld Studio.
@@ -122,4 +122,4 @@ Alternatives worth knowing: nerfstudio/gsplat (CUDA-centric), SphereSfM, OpenMVG
 
 - Bundling **Insta360 MediaSDK** requires their developer agreement; do not redistribute proprietary binaries casually.
 - YOLO / PyTorch wheels inflate app size; consider shipping masks as an optional downloadable component.
-- A notarized Mac `.app` can wrap the PySide6 GUI + CLI; heavy binaries (COLMAP, Brush) are better detected on `PATH` or installed via the setup script.
+- A notarized Mac `.app` can wrap the PySide6 GUI + CLI; heavy tools (COLMAP, PyTorch) are better detected on `PATH` or installed via the setup script.

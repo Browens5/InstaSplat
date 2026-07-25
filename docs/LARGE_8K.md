@@ -8,11 +8,11 @@ defaults on Apple Silicon.
 ## Why chunk?
 
 A 10-minute 8K@30 equirect clip is ~18,000 frames. Feeding all of them into
-COLMAP + Brush on a laptop is impractical. Tiled mode:
+COLMAP + full-res training on a laptop is impractical. Tiled mode:
 
 1. Splits time into overlapping windows (~25s, 5s overlap; GPS path-length aware)
 2. Keeps **much more than 1–2 fps** via adaptive sampling (base ~6 fps, up to ~15 on turns)
-3. Reconstructs each chunk independently (YOLO MPS → COLMAP → Brush Metal)
+3. Reconstructs each chunk independently (YOLO MPS → COLMAP → metal_equirect)
 4. Estimates a Sim3 per chunk from COLMAP cameras → GPS/gyro world
 5. Transforms + merges PLYs with splat-transform → final `.ply` / `.sog`
 
@@ -34,13 +34,13 @@ GUI: enable **Large 8K@30 tiled mode**.
 | Stage | Metal path |
 |-------|------------|
 | YOLO people masks | PyTorch **MPS** (`mask.device=mps`) |
-| Brush training | Native **Metal / WebGPU** (serialized per chunk by default) |
+| metal_equirect training | **PyTorch MPS** (serialized per chunk by default) |
 | COLMAP | CPU on macOS (parallelism limited to avoid RAM thrash) |
 | Cubemap remap | CPU OpenCV (per-chunk) |
 
-`metal.serialize_brush: true` (default) processes one Brush job at a time to
+`metal.serialize_train: true` (default) processes one train job at a time to
 avoid Metal memory pressure. Raise `chunk.max_parallel_chunks` only if you have
-headroom and set `serialize_brush: false`.
+headroom and set `serialize_train: false`.
 
 ## Telemetry alignment
 

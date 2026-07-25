@@ -7,7 +7,6 @@ import os
 import shutil
 import subprocess
 from dataclasses import asdict, dataclass
-from pathlib import Path
 from typing import Any
 
 
@@ -76,7 +75,6 @@ def check_colmap() -> DepStatus:
             required_for=["sfm"],
         )
     code, out, err = _run([path, "-h"])
-    # COLMAP prints help to stderr sometimes
     available = code == 0 or "COLMAP" in (out + err)
     return DepStatus(
         "colmap",
@@ -84,53 +82,6 @@ def check_colmap() -> DepStatus:
         path,
         notes="CPU mapping is typical on macOS Apple Silicon",
         required_for=["sfm"],
-    )
-
-
-def check_brush(bin_name: str = "brush") -> DepStatus:
-    path = _which(bin_name)
-    if not path:
-        # Also check common cargo install location
-        cargo = Path.home() / ".cargo" / "bin" / bin_name
-        path = str(cargo) if cargo.exists() else None
-    if not path:
-        return DepStatus(
-            "brush",
-            False,
-            notes=(
-                "Build from https://github.com/ArthurBrussee/brush "
-                "(cargo install / cargo run --release). Ideal for Mac Metal/WebGPU."
-            ),
-            required_for=["train"],
-        )
-    code, out, err = _run([path, "--help"])
-    return DepStatus(
-        "brush",
-        code == 0 or "brush" in (out + err).lower(),
-        path,
-        required_for=["train"],
-    )
-
-
-def check_opensplat(bin_name: str = "opensplat") -> DepStatus:
-    path = _which(bin_name)
-    if not path:
-        return DepStatus(
-            "opensplat",
-            False,
-            notes=(
-                "Build from https://github.com/pierotofy/OpenSplat with "
-                "-DGPU_RUNTIME=MPS for Apple Silicon Metal training (AGPL)."
-            ),
-            required_for=["train"],
-        )
-    code, out, err = _run([path, "--help"])
-    return DepStatus(
-        "opensplat",
-        code == 0 or "opensplat" in (out + err).lower() or "splat" in (out + err).lower(),
-        path,
-        notes="Metal MPS trainer alternative to Brush",
-        required_for=["train"],
     )
 
 
@@ -160,8 +111,8 @@ def check_mediasdk() -> DepStatus:
             False,
             notes=(
                 "Official Insta360 MediaSDK targets Windows/Ubuntu, not macOS. "
-                "On Mac, export equirectangular MP4 from Insta360 Studio, or run "
-                "MediaSDK in a Linux Docker/cloud worker."
+                "On Mac, export equirectangular MP4 from Insta360 Studio, or use a "
+                "Linux cloud/Docker worker for MediaSDK stitching."
             ),
             required_for=["stitch"],
         )
@@ -179,8 +130,8 @@ def check_python_ml() -> list[DepStatus]:
                 "pytorch",
                 True,
                 version=torch.__version__,
-                notes=f"MPS available: {mps}",
-                required_for=["mask", "metal_equirect"],
+                notes=f"MPS available: {mps} (required for metal_equirect train + YOLO)",
+                required_for=["mask", "train"],
             )
         )
     except ImportError:
@@ -189,7 +140,7 @@ def check_python_ml() -> list[DepStatus]:
                 "pytorch",
                 False,
                 notes="pip install torch (MPS builds for Apple Silicon)",
-                required_for=["mask", "metal_equirect"],
+                required_for=["mask", "train"],
             )
         )
     try:
@@ -215,27 +166,19 @@ def check_python_ml() -> list[DepStatus]:
     return results
 
 
-def check_all(
-    brush_bin: str = "brush",
-    splat_transform_bin: str = "splat-transform",
-) -> list[DepStatus]:
+def check_all(splat_transform_bin: str = "splat-transform") -> list[DepStatus]:
     return [
         check_ffmpeg(),
         check_exiftool(),
         check_colmap(),
-        check_brush(brush_bin),
-        check_opensplat(),
         check_splat_transform(splat_transform_bin),
         check_mediasdk(),
         *check_python_ml(),
     ]
 
 
-def report_dict(
-    brush_bin: str = "brush",
-    splat_transform_bin: str = "splat-transform",
-) -> dict[str, Any]:
-    deps = check_all(brush_bin, splat_transform_bin)
+def report_dict(splat_transform_bin: str = "splat-transform") -> dict[str, Any]:
+    deps = check_all(splat_transform_bin)
     return {
         "platform": os.uname().sysname,
         "machine": os.uname().machine,
@@ -246,11 +189,7 @@ def report_dict(
 
 def _ready_stages(deps: list[DepStatus]) -> dict[str, bool]:
     by_name = {d.name: d for d in deps}
-    train_ok = (
-        by_name.get("brush", DepStatus("brush", False)).available
-        or by_name.get("opensplat", DepStatus("opensplat", False)).available
-        or by_name.get("pytorch", DepStatus("pytorch", False)).available
-    )
+    train_ok = by_name.get("pytorch", DepStatus("pytorch", False)).available
     mac_long_360 = (
         by_name.get("ffmpeg", DepStatus("ffmpeg", False)).available
         and by_name.get("colmap", DepStatus("colmap", False)).available

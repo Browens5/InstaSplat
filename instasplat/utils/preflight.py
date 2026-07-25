@@ -39,25 +39,15 @@ def run_preflight(cfg: PipelineConfig, paths: JobPaths) -> PreflightResult:
     log = get_logger("instasplat.preflight", paths.logs / "preflight.log")
     result = PreflightResult(ok=True)
 
-    deps = {d.name: d for d in check_all(cfg.train.brush_bin, cfg.export.splat_transform_bin)}
+    deps = {d.name: d for d in check_all(cfg.export.splat_transform_bin)}
     for name in ("ffmpeg", "colmap"):
         if not deps.get(name, None) or not deps[name].available:
             result.blocking.append(f"Missing required tool: {name}")
-    trainer_ok = (deps.get("brush") and deps["brush"].available) or (
-        deps.get("opensplat") and deps["opensplat"].available
-    )
-    metal_equirect_ok = deps.get("pytorch") and deps["pytorch"].available
-    if cfg.train.backend == "metal_equirect":
-        if not metal_equirect_ok:
-            result.blocking.append(
-                "metal_equirect trainer needs PyTorch (MPS on Apple Silicon). "
-                "pip install torch — see docs/METAL_EQUIRECT_TRAINER.md"
-            )
-    elif not trainer_ok:
+    if not deps.get("pytorch") or not deps["pytorch"].available:
         result.blocking.append(
-            "No Metal trainer found (brush, opensplat, or pytorch for metal_equirect). "
-            "Run `instasplat install-brush`, build OpenSplat with -DGPU_RUNTIME=MPS, "
-            "or set train.backend: metal_equirect with PyTorch."
+            "PyTorch required for metal_equirect training (and YOLO masks). "
+            "pip install torch — Apple Silicon: use the MPS wheel from pytorch.org. "
+            "See docs/METAL_EQUIRECT_TRAINER.md"
         )
     if not deps.get("splat-transform") or not deps["splat-transform"].available:
         result.blocking.append("Missing splat-transform (npm i -g @playcanvas/splat-transform)")

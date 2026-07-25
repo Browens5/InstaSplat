@@ -7,7 +7,7 @@ InstaSplat’s Mac-local, tiled 8K pipeline.
 
 | Priority | Strategy | Source | InstaSplat action |
 |----------|----------|--------|-------------------|
-| P0 | Multi-trainer backends (Metal) | OpenSplat, Brush, MetalSplatter | `train.backend = brush \| opensplat` |
+| P0 | Native equirect trainer (Metal/MPS) | metal_equirect (3DGUT-inspired) | `train.backend = metal_equirect` |
 | P0 | Keep sequential + overlapping capture | on-the-fly-nvs, LongSplat | Capture guidelines + overlap checks |
 | P0 | Compressed delivery (SPZ / streamed SOG) | spz, splat-transform, LichtFeld | Default large-8k exports include `spz` |
 | P1 | Hierarchical / LOD after tile merge | hierarchical-3d-gaussians, threedtiles | Optional LOD / streamed-SOG export |
@@ -43,7 +43,7 @@ InstaSplat’s Mac-local, tiled 8K pipeline.
 ### 3dgrut (nv-tlabs) — 3DGRT / 3DGUT
 - Ray-traced Gaussians + **3DGUT** for distorted / rolling-shutter cameras inside rasterization.
 - Production tip: use **gsplat** for modular training; 3DGUT is the path for true equirect/fisheye without cubemap.
-- **Use:** cloud/Linux backend when we want native 360 training; keep cubemap path for Mac Brush/OpenSplat.
+- **Use:** cloud CUDA scale path; local Mac uses metal_equirect (cubemap SfM + equirect train).
 
 ### threedtiles (ebeaufay) — streaming large scenes
 - 3D Tiles viewer for three.js (LOD, streaming).
@@ -99,7 +99,7 @@ InstaSplat’s Mac-local, tiled 8K pipeline.
 ## Concrete InstaSplat roadmap
 
 ### Now (implemented or wiring)
-1. Trainer backend switch: `brush` (default) | `opensplat` (Metal MPS build).
+1. Trainer: `metal_equirect` (sole backend; equirect + COLMAP).
 2. Large-8k default exports: `ply`, `sog`, `spz` (+ optional streamed LOD).
 3. Capture guidelines doc (sequential, overlap, speed, dynamics).
 4. Post-merge opacity/NaN prune (LongSplat-style size control).
@@ -134,8 +134,8 @@ preflight gates, INSV/sidecar telemetry, scale-before-refine, resume tiles, merg
 
 | Component | Best open option on Mac |
 |-----------|-------------------------|
-| Train | Brush / OpenSplat (cubemap) or **metal_equirect** (native 360) |
-| View | Brush viewer, MetalSplatter, PlayCanvas, InstaSplat GUI |
+| Train | **metal_equirect** (native 360, MPS/Metal) |
+| View | MetalSplatter, PlayCanvas, InstaSplat GUI |
 | Compress | splat-transform → SOG/SPZ |
 | Distorted 360 train | **metal_equirect** locally; 3DGUT/LichtFeld in cloud for scale |
 | Large LOD | Hierarchical-3DGS merger (CUDA) or streamed SOG |

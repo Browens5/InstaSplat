@@ -249,7 +249,7 @@ def _chunk_pipeline_config(
     # Metal defaults
     if cfg.metal.prefer_metal:
         child.mask.device = detect_metal().torch_device
-        child.train.with_viewer = False
+        child.train.backend = "metal_equirect"
     return child
 
 
@@ -368,13 +368,13 @@ def process_one_chunk(
 def run_process_chunks(cfg: PipelineConfig, paths: JobPaths, manifest: ChunkManifest) -> dict[str, bool]:
     log = get_logger("instasplat.chunk", paths.logs / "chunk_process.log")
     workers = max(1, cfg.chunk.max_parallel_chunks)
-    if cfg.metal.prefer_metal and cfg.metal.serialize_brush:
-        # Brush on Metal is memory-heavy; keep train serialized via workers=1
-        # unless user raised max_parallel_chunks and disabled serialize_brush.
+    if cfg.metal.prefer_metal and cfg.metal.serialize_train:
+        # metal_equirect on MPS is memory-heavy; keep train serialized via workers=1
+        # unless user raised max_parallel_chunks and disabled serialize_train.
         workers = min(workers, cfg.chunk.max_parallel_chunks)
-        if cfg.metal.serialize_brush:
+        if cfg.metal.serialize_train:
             workers = 1
-            log.info("Serializing chunk processing for Metal Brush stability")
+            log.info("Serializing chunk processing for Metal equirect train stability")
 
     results: dict[str, bool] = {}
     if workers == 1 or cfg.dry_run:

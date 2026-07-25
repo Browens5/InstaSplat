@@ -37,9 +37,9 @@ def detect_metal() -> MetalStatus:
         notes.append("PyTorch not installed")
 
     if is_apple_silicon:
-        notes.append("Brush should use Metal/WebGPU on Apple Silicon")
+        notes.append("metal_equirect should use PyTorch MPS on Apple Silicon")
     elif is_macos:
-        notes.append("Intel Mac: Brush may use Metal; prefer Apple Silicon for 8K jobs")
+        notes.append("Intel Mac: prefer Apple Silicon for metal_equirect / 8K jobs")
 
     device = "mps" if mps_available else "cpu"
     return MetalStatus(

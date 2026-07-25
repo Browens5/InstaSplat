@@ -28,7 +28,7 @@ InstaSplat bridges that gap for Apple Silicon Macs:
 | An Insta360 capture (Studio equirect MP4) | A 3D scene file (`.ply` / `.sog` / `.spz`) | Automates the hard reconstruction steps |
 | A long walk / large outdoor space | One merged splat, not a dozen broken clips | Tiles the video, aligns with GPS/gyro, merges |
 | People walking through your footage | Cleaner geometry | YOLO people masks (Metal GPU) |
-| A laptop, not a cloud GPU farm | Local control + privacy | Metal-first training (Brush / OpenSplat) |
+| A laptop, not a cloud GPU farm | Local control + privacy | Native metal_equirect training (MPS/Metal) |
 
 It is **open source (MIT)** and designed **local-first**. Optional cloud steps
 exist for things Macs cannot do well (official Insta360 MediaSDK stitch, CUDA
@@ -44,7 +44,7 @@ After a successful run you typically have:
 - **`scene.sog` / `scene.spz`** — compressed formats for sharing / web viewers
 - Optional **quality report**, **LOD previews**, and packaging for other tools
 
-Open the splat in Brush, PlayCanvas, SuperSplat, MetalSplatter, and similar apps.
+Open the splat in PlayCanvas, SuperSplat, MetalSplatter, and similar apps.
 
 ---
 
@@ -97,7 +97,7 @@ frame into one giant job. Instead it:
 ```mermaid
 flowchart TB
   V["Long 360 video"] --> P["Plan overlapping tiles<br/>~25s each, denser on turns"]
-  P --> T1["Tile A<br/>mask → COLMAP → Brush"]
+  P --> T1["Tile A<br/>mask → COLMAP → metal_equirect"]
   P --> T2["Tile B"]
   P --> T3["Tile C"]
   T1 --> A["Align tiles<br/>GPS / gyro Sim3"]
@@ -140,8 +140,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[gui,dev]"
 
-./scripts/setup_macos.sh     # ffmpeg, COLMAP, splat-transform, Brush build
-instasplat install-brush     # if Brush is still missing
+./scripts/setup_macos.sh     # ffmpeg, COLMAP, splat-transform
+pip install -e ".[gui,dev]" # includes PyTorch for metal_equirect
 instasplat doctor            # confirms mac_long_360 readiness
 ```
 
@@ -191,7 +191,7 @@ flowchart LR
 | `sfm` | Solve camera path + sparse 3D | COLMAP |
 | `scale` | Make units meters | GPS / measured distance |
 | `refine` | Polish poses | COLMAP BA + gyro/GPS blend |
-| `train` | Build the splat | **Brush** or OpenSplat (Metal) |
+| `train` | Build the splat | **metal_equirect** (native 360, MPS/Metal) |
 | `export` | Convert formats | splat-transform |
 | `package` | Side packages + quality report | Nerfstudio / LOD / `cloud_job.json` |
 | `plan_chunks` … `merge_chunks` | Long-video tiling | gyro + GPS + Metal |
@@ -206,7 +206,6 @@ Full long-360 guide: **[docs/MAC_LONG_360.md](docs/MAC_LONG_360.md)**
 - **Pause / Resume / Stop** (pauses training with SIGSTOP)
 - Live **task ETA** and overall progress
 - Multi-select stages
-- One-click **Install Brush**
 
 ---
 
@@ -218,7 +217,7 @@ InstaSplat/
 ├── assets/                   ← diagrams for this README
 ├── docs/                     ← detailed guides (see docs/README.md)
 ├── examples/                 ← sample YAML configs
-├── scripts/                  ← setup_macos, install_brush, mac-360 helper
+├── scripts/                  ← setup_macos, mac-360 helper
 ├── instasplat/               ← Python package (CLI + GUI + stages)
 └── tests/                    ← unit tests
 ```
@@ -252,7 +251,7 @@ InstaSplat/
 ## FAQ
 
 **Do I need a NVIDIA GPU?**  
-No for the Mac path. Brush/OpenSplat use Apple Metal. Some optional research backends are CUDA-only (cloud).
+No for the Mac path. metal_equirect uses PyTorch MPS / Apple Metal. Optional cloud CUDA (3DGUT) remains for scale.
 
 **Can I feed a raw `.insv` with no Studio export?**  
 Not for production quality on Mac. Use Studio to stitch, or a Linux MediaSDK worker.
@@ -272,7 +271,7 @@ Yes in the GUI — Pause freezes the pipeline and training process; Resume conti
 
 MIT for InstaSplat code.
 
-Upstream tools keep their own licenses (COLMAP BSD, Brush Apache-2.0, YOLO/Ultralytics terms, splat-transform MIT, Insta360 SDK proprietary).
+Upstream tools keep their own licenses (COLMAP BSD, PyTorch/BSD-style, YOLO/Ultralytics terms, splat-transform MIT, Insta360 SDK proprietary).
 
 ---
 

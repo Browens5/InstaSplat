@@ -30,10 +30,13 @@ scale:
   stereo_baseline_m: 0.065
 
 train:
-  total_steps: 30000
-  max_resolution: 1600
-  with_viewer: false
-  brush_bin: brush
+  backend: metal_equirect
+  total_steps: 15000
+  max_resolution: 1024
+  export_every: 2000
+  sh_degree: 1
+  with_eval3d: true
+  composite: tile
 
 export:
   formats: [ply, sog]

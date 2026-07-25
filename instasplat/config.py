@@ -70,8 +70,8 @@ class MetalConfig:
     """Apple Metal / MPS preferences for large local jobs."""
 
     prefer_metal: bool = True
-    # Keep Brush train serial to avoid Metal memory pressure across tiles
-    serialize_brush: bool = True
+    # Serialize metal_equirect train across tiles to avoid MPS memory pressure
+    serialize_train: bool = True
     # YOLO device override; empty = auto-detect MPS
     torch_device: str = ""
 
@@ -87,7 +87,7 @@ class MaskConfig:
     classes: list[int] = field(default_factory=lambda: [0])  # COCO person
     device: str = "mps"  # Apple Silicon; per-frame CPU fallback on MPS crashes
     dilate_px: int = 4
-    # Brush expects masks where white = keep, black = ignore (or alpha).
+    # Masks: white = keep, black = ignore (or alpha).
     invert: bool = False
     # retina_masks=True triggers intermittent PyTorch MPS indexing crashes in YOLO-seg
     retina_masks: bool = False
@@ -156,24 +156,18 @@ class ScaleConfig:
     gps_csv: Path | None = None
 
 
-TrainerBackend = Literal["brush", "opensplat", "metal_equirect"]
+TrainerBackend = Literal["metal_equirect"]
 
 
 @dataclass
 class TrainConfig:
-    """Gaussian splat training settings (Metal-capable backends)."""
+    """Native equirectangular Gaussian training (metal_equirect)."""
 
-    # brush = ArthurBrussee/brush (WebGPU/Metal); opensplat = pierotofy/OpenSplat (MPS)
-    # metal_equirect = InstaSplat native equirect trainer (3DGUT/gsplat-inspired, MPS/Metal)
-    backend: TrainerBackend = "brush"
-    total_steps: int = 30_000
-    max_resolution: int = 1600
-    with_viewer: bool = False
-    export_every: int = 5_000
-    brush_bin: str = "brush"
-    opensplat_bin: str = "opensplat"
+    backend: TrainerBackend = "metal_equirect"
+    total_steps: int = 15_000
+    max_resolution: int = 1024  # equirect width
+    export_every: int = 2_000
     extra_args: list[str] = field(default_factory=list)
-    # metal_equirect knobs
     sh_degree: int = 1
     lr: float = 0.01
     with_eval3d: bool = True
@@ -251,7 +245,7 @@ class PipelineConfig:
         """
         Best local-Mac settings for long 360 video → tiled Gaussian splat.
 
-        Metal-first: YOLO MPS → COLMAP CPU cubemap → Brush/OpenSplat Metal →
+        Metal-first: YOLO MPS → COLMAP CPU cubemap → metal_equirect train →
         GPS/gyro tile align → splat-transform merge. No CUDA / LingBot-Map.
         """
         self.mode = "tiled"
@@ -265,7 +259,7 @@ class PipelineConfig:
         self.chunk.min_overlap_ratio = 0.15
         self.chunk.merge_prune_opacity = 0.05
         self.metal.prefer_metal = True
-        self.metal.serialize_brush = True
+        self.metal.serialize_train = True
         self.mask.device = "mps"
         self.sfm.mode = "perspective_cubemap"
         self.sfm.face_resolution = 1280
@@ -273,10 +267,9 @@ class PipelineConfig:
         self.sfm.matcher = "sequential"
         self.sfm.sequential_overlap = 18
         self.sfm.telemetry_fallback = True
-        self.train.max_resolution = 1600
-        self.train.total_steps = 20_000
-        self.train.backend = "brush"
-        self.train.with_viewer = False
+        self.train.max_resolution = 1024
+        self.train.total_steps = 15_000
+        self.train.backend = "metal_equirect"
         self.export.formats = ["ply", "sog", "spz"]
         self.export.min_opacity = 0.05
         self.export.streamed_lod = True
@@ -327,7 +320,17 @@ class PipelineConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PipelineConfig:
         def _section(name: str, typ: type) -> Any:
-            raw = data.get(name, {}) or {}
+            raw = dict(data.get(name, {}) or {})
+            # Legacy field renames
+            if name == "metal" and "serialize_brush" in raw and "serialize_train" not in raw:
+                raw["serialize_train"] = raw.pop("serialize_brush")
+            if name == "train":
+                # Brush / OpenSplat removed — always metal_equirect
+                raw.pop("brush_bin", None)
+                raw.pop("opensplat_bin", None)
+                raw.pop("with_viewer", None)
+                if raw.get("backend") in {None, "brush", "opensplat", "metal_equirect"}:
+                    raw["backend"] = "metal_equirect"
             allowed = {f.name for f in fields(typ)}
             cleaned = {k: v for k, v in raw.items() if k in allowed}
             # Path fields
@@ -393,7 +396,7 @@ chunk:
 
 metal:
   prefer_metal: true
-  serialize_brush: true
+  serialize_train: true     # one tile train at a time (MPS memory)
   torch_device: ""          # empty = auto MPS
 
 mask:
@@ -414,15 +417,13 @@ scale:
   stereo_baseline_m: 0.065
 
 train:
-  backend: brush            # brush | opensplat | metal_equirect
-  total_steps: 20000
-  max_resolution: 1600      # equirect width when backend=metal_equirect
-  with_viewer: false
-  brush_bin: brush
-  opensplat_bin: opensplat
-  sh_degree: 1              # metal_equirect SH degree (0 or 1)
-  lr: 0.01                  # metal_equirect Adam base LR
-  with_eval3d: true         # 3DGUT-style 3D response opacity modulation
+  backend: metal_equirect   # native equirect Gaussian trainer (sole backend)
+  total_steps: 15000
+  max_resolution: 1024      # equirect width
+  export_every: 2000
+  sh_degree: 1
+  lr: 0.01
+  with_eval3d: true
   composite: tile           # tile (sorted) | oit (faster)
   sh_warmup_steps: 500
   densify_every: 200
@@ -475,7 +476,7 @@ chunk:
 
 metal:
   prefer_metal: true
-  serialize_brush: true
+  serialize_train: true
 
 mask:
   enabled: true
@@ -492,11 +493,12 @@ scale:
   mode: gps
 
 train:
-  backend: brush            # or opensplat for C++ Metal MPS
-  total_steps: 20000
-  max_resolution: 1600
-  brush_bin: brush
-  opensplat_bin: opensplat
+  backend: metal_equirect
+  total_steps: 15000
+  max_resolution: 1024
+  sh_degree: 1
+  with_eval3d: true
+  composite: tile
 
 export:
   formats: [ply, sog, spz]

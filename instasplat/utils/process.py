@@ -73,7 +73,7 @@ def run_cmd(
             )
         return proc
 
-    # Controllable long-running process (Brush / OpenSplat)
+    # Controllable long-running process (external trainers / tools)
     popen = subprocess.Popen(
         list(cmd),
         cwd=str(cwd) if cwd else None,

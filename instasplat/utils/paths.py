@@ -78,7 +78,7 @@ class JobPaths:
 
     @property
     def colmap_model(self) -> Path:
-        """Primary sparse model used by Brush (model 0)."""
+        """Primary sparse model used for training (model 0)."""
         return self.colmap_sparse / "0"
 
     @property
@@ -94,8 +94,14 @@ class JobPaths:
         return self.root / "05_train"
 
     @property
-    def brush_export(self) -> Path:
+    def train_export(self) -> Path:
+        """Gaussian export directory (``05_train/exports``)."""
         return self.train / "exports"
+
+    @property
+    def brush_export(self) -> Path:
+        """Alias for ``train_export`` (legacy name kept for job compatibility)."""
+        return self.train_export
 
     @property
     def export(self) -> Path:

@@ -6,35 +6,28 @@
 - Homebrew
 - Python 3.11+
 - Node.js 18+ (for splat-transform)
-- Rust 1.88+ (to build Brush)
+- PyTorch with MPS (included via `pip install -e .`)
 - Insta360 Studio (for equirect exports)
 
 ## Quick setup
 
 ```bash
 git clone <this-repo> && cd InstaSplat
-./scripts/setup_macos.sh          # brew tools + auto-build Brush
+./scripts/setup_macos.sh          # brew tools + splat-transform
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[gui,dev]"
+pip install -e ".[gui,dev]"       # includes torch for metal_equirect
 instasplat doctor
-# If Brush was not built during setup:
-instasplat install-brush
 ```
+
+If `doctor` reports PyTorch without MPS on Apple Silicon, install the official
+MPS wheel from https://pytorch.org .
 
 ## Manual installs
 
 ```bash
 brew install ffmpeg exiftool colmap git
 npm install -g @playcanvas/splat-transform
-
-# Brush (auto) — Apple Silicon downloads the GitHub release binary (fast).
-# Homebrew `cargo` is often too old (Brush needs Rust 1.88+ / edition 2024).
-instasplat install-brush
-# Force source build with rustup:
-#   instasplat install-brush --from-source
-# or: ./scripts/install_brush.sh
-# Binary lands at ~/.local/bin/brush (and ~/.cargo/bin/brush when present)
 ```
 
 ## Insta360 Studio export checklist
@@ -51,7 +44,8 @@ First mask run downloads weights (e.g. `yolov8m-seg.pt`). For air-gapped machine
 ## COLMAP notes
 
 - Homebrew COLMAP on Apple Silicon is typically **CPU** for mapping — fine for small jobs.
-- For native equirectangular cameras, use a recent COLMAP build with `EQUIRECTANGULAR`, or stick to `perspective_cubemap` (default).
+- Cubemap SfM (`perspective_cubemap`) is the default. Poses are lifted to equirect for
+  **metal_equirect** training (see [METAL_EQUIRECT_TRAINER.md](METAL_EQUIRECT_TRAINER.md)).
 
 ## GUI
 

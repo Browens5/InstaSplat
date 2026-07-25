@@ -13,7 +13,7 @@ STAGE_HELP: dict[str, str] = {
     "sfm": "Cubemap/equirect COLMAP sparse reconstruction",
     "scale": "Metric scale (GPS / known distance)",
     "refine": "COLMAP BA + GPS/gyro pose blend",
-    "train": "Brush or OpenSplat Gaussian training",
+    "train": "metal_equirect Gaussian training (equirect + COLMAP)",
     "export": "splat-transform → ply/sog/spz/…",
     "package": "Nerfstudio / hierarchy / quality / cloud_job",
     "plan_chunks": "Plan overlapping tiles for long 360",

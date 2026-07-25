@@ -4,13 +4,13 @@ InstaSplat’s **`metal_equirect`** training backend optimizes 3D Gaussians
 directly against **equirectangular** frames, using COLMAP poses. It is the
 local Mac counterpart to cloud `gsplat_3dgut` (see [CLOUD.md](CLOUD.md)).
 
-## Why not Brush?
+## Sole trainer
 
-Brush / OpenSplat expect **pinhole** COLMAP datasets. The cubemap path works
-but expands views ~6× and never trains on the full 360×180 pixel domain.
-Native equirect training needs a **nonlinear camera projection** in the
-rasterizer — the idea behind NVIDIA **3DGUT** (Unscented Transform through
-arbitrary projections) as integrated in [gsplat](https://github.com/nerfstudio-project/gsplat).
+`metal_equirect` is InstaSplat’s **only** Gaussian trainer. It trains on full
+equirect frames with a **nonlinear camera projection** (Unscented Transform),
+inspired by NVIDIA **3DGUT** / [gsplat](https://github.com/nerfstudio-project/gsplat).
+COLMAP still uses cubemap faces for SfM on Mac; poses are lifted to panoramas
+for training.
 
 ## Architecture (gsplat / 3DGUT-inspired)
 
@@ -53,10 +53,11 @@ COLMAP sparse (cubemap-lifted or EQUIRECTANGULAR)
 ## Usage
 
 ```bash
-# After SfM (cubemap or equirect) has a sparse model:
-instasplat run --job ./runs/walk_360 --only train --trainer metal_equirect
+# After SfM has a sparse model:
+instasplat run --job ./runs/walk_360 --only train
+instasplat train-equirect -j ./runs/walk_360
 
-# Or GUI: Trainer → metal_equirect
+# Or GUI: Run / Continue (trainer is always metal_equirect)
 ```
 
 Config (`train` section):

@@ -29,7 +29,7 @@ def run_metal_equirect_train(
 ) -> MetalEquirectResult:
     """Train Gaussians on equirect frames using COLMAP poses."""
     log = get_logger("instasplat.metal_equirect", paths.logs / "metal_equirect.log")
-    export_dir = paths.brush_export
+    export_dir = paths.train_export
     export_dir.mkdir(parents=True, exist_ok=True)
 
     if cfg.dry_run:

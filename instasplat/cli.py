@@ -47,7 +47,6 @@ def version() -> None:
 
 @app.command("doctor")
 def doctor(
-    brush_bin: str = typer.Option("brush", help="Brush binary name/path"),
     splat_transform_bin: str = typer.Option(
         "splat-transform", help="splat-transform binary name/path"
     ),
@@ -55,13 +54,12 @@ def doctor(
     """Check local dependencies and which stages can run on this Mac."""
     from instasplat.utils import deps as deps_mod
 
-    data = deps_mod.report_dict(brush_bin, splat_transform_bin)
+    data = deps_mod.report_dict(splat_transform_bin)
     print_report(console)
     metal = metal_report()
     console.print("\n[bold]Metal / Apple GPU[/bold]")
     console.print(metal)
-    ready = data["ready_stages"]
-    if not ready.get("official_stitch"):
+    if not data["ready_stages"].get("official_stitch"):
         console.print(
             "\n[yellow]Note:[/yellow] Official Insta360 MediaSDK is not available on macOS. "
             "Export a stitched equirectangular MP4 from Insta360 Studio, or use a Linux "
@@ -73,12 +71,13 @@ def doctor(
     )
     if not data["ready_stages"].get("train"):
         console.print(
-            "\n[yellow]Brush missing:[/yellow] run `instasplat install-brush` "
-            "(auto-clones + cargo build --release)."
+            "\n[yellow]PyTorch missing:[/yellow] pip install torch "
+            "(Apple Silicon: MPS wheel from pytorch.org). "
+            "Required for metal_equirect training."
         )
     console.print(
         "[cyan]Tip:[/cyan] `instasplat mac-360 -i ./capture_equirect_8k.mp4 -o ./runs -n walk` "
-        "for the best local tiled Metal pipeline."
+        "for the tiled Metal equirect pipeline."
     )
 
 
@@ -155,9 +154,7 @@ def stage_cmd(
         no_mask=False,
         export_formats=None,
         dry_run=dry_run,
-        with_viewer=False,
         large_8k=large_8k,
-        trainer=None,
         no_refine=False,
         streamed_lod=False,
         no_cloud_manifest=False,
@@ -205,18 +202,12 @@ def run(
         None, "--formats", help="Comma-separated: ply,sog,spz,glb,html,csv,compressed.ply"
     ),
     dry_run: bool = typer.Option(False, help="Print/plan without executing heavy tools"),
-    with_viewer: bool = typer.Option(False, help="Open Brush viewer while training"),
     large_8k: bool = typer.Option(
         False,
         "--large-8k",
         help="Enable Mac long-360 tiled mode (alias of mac-360 defaults)",
     ),
     tiled: bool = typer.Option(False, "--tiled", help="Alias for enabling chunk.mode=tiled"),
-    trainer: str | None = typer.Option(
-        None,
-        "--trainer",
-        help="Training backend: brush | opensplat | metal_equirect",
-    ),
     no_refine: bool = typer.Option(False, "--no-refine", help="Disable pose refine stage"),
     streamed_lod: bool = typer.Option(
         False, "--streamed-lod", help="Also export lod-meta.json streamed SOG"
@@ -248,9 +239,7 @@ def run(
         no_mask=no_mask,
         export_formats=export_formats,
         dry_run=dry_run,
-        with_viewer=with_viewer,
         large_8k=large_8k or tiled,
-        trainer=trainer,
         no_refine=no_refine,
         streamed_lod=streamed_lod,
         no_cloud_manifest=no_cloud_manifest,
@@ -269,9 +258,6 @@ def mac_360(
     ),
     output_dir: Path = typer.Option(DEFAULT_OUT, "--output", "-o"),
     project_name: str = typer.Option("walk_360", "--name", "-n"),
-    trainer: str = typer.Option(
-        "brush", "--trainer", help="brush | opensplat | metal_equirect"
-    ),
     no_mask: bool = typer.Option(False, help="Disable YOLO people masking"),
     dry_run: bool = typer.Option(False, help="Plan chunks + preflight only"),
     allow_unstitched: bool = typer.Option(False, "--allow-unstitched"),
@@ -279,7 +265,7 @@ def mac_360(
     formats: str = typer.Option("ply,sog,spz", "--formats"),
 ) -> None:
     """
-    Best local Mac pipeline: long 360 video → tiled Metal Gaussian splat.
+    Best local Mac pipeline: long 360 video → tiled Metal equirect splat.
 
     Expects a stitched equirectangular MP4 from Insta360 Studio. Keep the
     original .insv beside it (or gyro.csv/gps.csv sidecars) for turn densify
@@ -287,7 +273,7 @@ def mac_360(
     """
     console.print(
         "[bold cyan]InstaSplat mac-360[/bold cyan] — tiled Metal pipeline "
-        "(YOLO MPS → COLMAP → Brush/OpenSplat → GPS/gyro merge)"
+        "(YOLO MPS → COLMAP → metal_equirect → GPS/gyro merge)"
     )
     cfg = _build_run_config(
         input_path=input_path,
@@ -303,9 +289,7 @@ def mac_360(
         no_mask=no_mask,
         export_formats=formats,
         dry_run=dry_run,
-        with_viewer=False,
         large_8k=True,
-        trainer=trainer,
         no_refine=False,
         streamed_lod=True,
         no_cloud_manifest=False,
@@ -339,9 +323,7 @@ def _build_run_config(
     no_mask: bool,
     export_formats: str | None,
     dry_run: bool,
-    with_viewer: bool,
     large_8k: bool,
-    trainer: str | None,
     no_refine: bool,
     streamed_lod: bool,
     no_cloud_manifest: bool,
@@ -375,12 +357,7 @@ def _build_run_config(
     elif large_8k and job is not None and cfg.mode != "tiled":
         cfg.enable_mac_long_360_defaults()
 
-    if trainer:
-        if trainer not in {"brush", "opensplat", "metal_equirect"}:
-            raise typer.BadParameter(
-                "trainer must be 'brush', 'opensplat', or 'metal_equirect'"
-            )
-        cfg.train.backend = trainer  # type: ignore[assignment]
+    cfg.train.backend = "metal_equirect"
     if no_refine:
         cfg.refine.enabled = False
     if streamed_lod:
@@ -420,9 +397,6 @@ def _build_run_config(
         cfg.export.formats = [s.strip() for s in export_formats.split(",") if s.strip()]  # type: ignore[assignment]
     if dry_run:
         cfg.dry_run = True
-    if with_viewer:
-        cfg.train.with_viewer = True
-        cfg.metal.serialize_brush = False
     return cfg
 
 
@@ -519,39 +493,6 @@ def train_equirect_cmd(
     if result.preview_path:
         console.print(f"  preview: {result.preview_path}")
 
-
-@app.command("install-brush")
-def install_brush_cmd(
-    force: bool = typer.Option(False, "--force", help="Reinstall even if brush is on PATH"),
-    from_source: bool = typer.Option(
-        False,
-        "--from-source",
-        help="Force cargo build (needs Rust 1.88+). Default: download GitHub release binary.",
-    ),
-) -> None:
-    """Install ArthurBrussee/brush (Metal/WebGPU) to ~/.local/bin."""
-    from instasplat.utils.brush_install import install_brush
-
-    if from_source:
-        console.print(
-            "[cyan]Installing Brush from source…[/cyan] "
-            "(Rust 1.88+ release build; may take several minutes)"
-        )
-    else:
-        console.print(
-            "[cyan]Installing Brush…[/cyan] "
-            "(prefers GitHub release binary; falls back to cargo if needed)"
-        )
-    result = install_brush(force_rebuild=force, from_source=from_source)
-    if result.ok:
-        console.print(f"[green]OK[/green] {result.message}")
-        if result.brush_path:
-            console.print(f"  binary: {result.brush_path}")
-    else:
-        console.print(f"[red]Failed[/red] {result.message}")
-        if result.log_path:
-            console.print(f"  log: {result.log_path}")
-        raise typer.Exit(code=1)
 
 
 @app.command("validate")

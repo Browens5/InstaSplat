@@ -63,6 +63,11 @@ def doctor(
     console.print(
         f"\n[cyan]Mac long-360 ready:[/cyan] {'yes' if ready else 'no — install missing tools above'}"
     )
+    if not data["ready_stages"].get("train"):
+        console.print(
+            "\n[yellow]Brush missing:[/yellow] run `instasplat install-brush` "
+            "(auto-clones + cargo build --release)."
+        )
     console.print(
         "[cyan]Tip:[/cyan] `instasplat mac-360 -i ./capture_equirect_8k.mp4 -o ./runs -n walk` "
         "for the best local tiled Metal pipeline."
@@ -278,14 +283,29 @@ def _build_run_config(
 
 
 def _execute_pipeline(cfg: PipelineConfig) -> None:
+    from instasplat.utils.progress import ProgressEvent, format_duration
+
     with Progress() as progress:
         task = progress.add_task("pipeline", total=1.0)
 
-        def on_progress(stage: str, frac: float, msg: str) -> None:
-            progress.update(task, completed=frac, description=f"{stage}: {msg}")
-            console.log(msg)
+        def on_progress(ev: ProgressEvent) -> None:
+            progress.update(
+                task,
+                completed=ev.overall_frac,
+                description=(
+                    f"{ev.stage}: {ev.message} "
+                    f"(elapsed {format_duration(ev.stage_elapsed_sec)}, "
+                    f"ETA {format_duration(ev.stage_eta_sec)})"
+                ),
+            )
+            console.log(ev.terminal_line())
 
         result = Pipeline(cfg, on_progress=on_progress).run()
+
+    if result.stage_timings:
+        console.print("\n[bold]Stage elapsed[/bold]")
+        for name, secs in result.stage_timings.items():
+            console.print(f"  {name}: {format_duration(secs)}")
 
     if result.success:
         console.print(f"[green]Done[/green] → {result.paths.root}")
@@ -303,6 +323,26 @@ def _execute_pipeline(cfg: PipelineConfig) -> None:
         console.print(f"  preflight: {result.paths.root / 'preflight.json'}")
     else:
         console.print(f"[red]Failed[/red]: {result.error}")
+        raise typer.Exit(code=1)
+
+
+@app.command("install-brush")
+def install_brush_cmd(
+    force: bool = typer.Option(False, "--force", help="Rebuild even if brush is on PATH"),
+) -> None:
+    """Clone and build ArthurBrussee/brush (Metal/WebGPU), install to ~/.local/bin."""
+    from instasplat.utils.brush_install import install_brush
+
+    console.print("[cyan]Installing Brush…[/cyan] (Rust release build; may take several minutes)")
+    result = install_brush(force_rebuild=force)
+    if result.ok:
+        console.print(f"[green]OK[/green] {result.message}")
+        if result.brush_path:
+            console.print(f"  binary: {result.brush_path}")
+    else:
+        console.print(f"[red]Failed[/red] {result.message}")
+        if result.log_path:
+            console.print(f"  log: {result.log_path}")
         raise typer.Exit(code=1)
 
 

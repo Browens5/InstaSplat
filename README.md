@@ -6,7 +6,8 @@ Local macOS pipeline: **Insta360 `.insv` → frames + gyro → YOLO people masks
 # Install
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[gui,dev]"
-./scripts/setup_macos.sh   # brew/npm/cargo helpers
+./scripts/setup_macos.sh   # brew/npm + auto-build Brush
+instasplat install-brush   # if Brush not on PATH yet
 
 # Check what can run on this Mac
 instasplat doctor

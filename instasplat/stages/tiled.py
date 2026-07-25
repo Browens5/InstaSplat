@@ -263,7 +263,10 @@ def process_one_chunk(
     parent_paths: JobPaths,
     plan: ChunkPlan,
 ) -> tuple[str, bool, str | None]:
+    from instasplat.utils.control import get_controller
+
     log = get_logger("instasplat.chunk")
+    get_controller().checkpoint(f"chunk:{plan.chunk_id}")
     cdir = chunk_dir(parent_paths, plan.chunk_id)
     cdir.mkdir(parents=True, exist_ok=True)
     if cfg.skip_existing and _chunk_already_done(cdir):

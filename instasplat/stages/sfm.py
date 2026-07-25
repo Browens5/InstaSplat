@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from instasplat.config import PipelineConfig
+from instasplat.utils.colmap_cli import detect_colmap_caps, quality_feature_args
 from instasplat.utils.paths import JobPaths
 from instasplat.utils.process import get_logger, run_cmd
 
@@ -137,14 +138,14 @@ def render_cubemaps(cfg: PipelineConfig, paths: JobPaths) -> tuple[Path, Path | 
     return img_out, mask_out if has_masks else None, count
 
 
-def _quality_sift_args(quality: str) -> list[str]:
-    presets = {
-        "low": ["--SiftExtraction.max_image_size", "1000", "--SiftExtraction.max_num_features", "2048"],
-        "medium": ["--SiftExtraction.max_image_size", "1600", "--SiftExtraction.max_num_features", "4096"],
-        "high": ["--SiftExtraction.max_image_size", "2400", "--SiftExtraction.max_num_features", "8192"],
-        "extreme": ["--SiftExtraction.max_image_size", "3200", "--SiftExtraction.max_num_features", "16384"],
-    }
-    return presets.get(quality, presets["high"])
+def _is_usable_colmap_model(model_dir: Path) -> bool:
+    """True if model looks like a real COLMAP reconstruction (not telemetry prior)."""
+    if not model_dir.is_dir() or not any(model_dir.iterdir()):
+        return False
+    # fallback.py writes this marker when SfM failed and gyro/GPS poses were installed
+    if (model_dir / "TELEMETRY_PRIOR.txt").exists():
+        return False
+    return (model_dir / "images.bin").exists() or (model_dir / "images.txt").exists()
 
 
 def run_colmap(
@@ -166,12 +167,27 @@ def run_colmap(
     sparse.mkdir(parents=True, exist_ok=True)
     model0 = sparse / "0"
 
-    if model0.exists() and any(model0.iterdir()) and cfg.skip_existing:
+    if cfg.skip_existing and _is_usable_colmap_model(model0):
         log.info("Skipping COLMAP; existing model at %s", model0)
         return model0
 
+    # Replace telemetry-prior / failed partial models so a fixed COLMAP can re-run
+    if not cfg.dry_run and model0.exists() and not _is_usable_colmap_model(model0):
+        log.info("Removing non-COLMAP / telemetry prior at %s before re-run", model0)
+        shutil.rmtree(model0)
+        if db.exists():
+            db.unlink()
+
     if db.exists() and not cfg.skip_existing:
         db.unlink()
+
+    caps = detect_colmap_caps(colmap)
+    log.info(
+        "COLMAP feature options: %s / %s (%s)",
+        caps.max_image_size,
+        caps.extract_use_gpu,
+        "modern" if caps.modern else "legacy",
+    )
 
     extract_cmd = [
         colmap or "colmap",
@@ -184,8 +200,8 @@ def run_colmap(
         "0",
         "--ImageReader.camera_model",
         camera_model,
-        *_quality_sift_args(cfg.sfm.quality),
-        "--SiftExtraction.use_gpu",
+        *quality_feature_args(cfg.sfm.quality, caps),
+        caps.extract_use_gpu,
         "1" if cfg.sfm.use_gpu else "0",
     ]
     if mask_dir is not None:
@@ -193,14 +209,15 @@ def run_colmap(
 
     run_cmd(extract_cmd, log_file=paths.logs / "colmap_features.log", dry_run=cfg.dry_run)
 
+    gpu_flag = "1" if cfg.sfm.use_gpu else "0"
     if cfg.sfm.matcher == "exhaustive":
         match_cmd = [
             colmap or "colmap",
             "exhaustive_matcher",
             "--database_path",
             str(db),
-            "--SiftMatching.use_gpu",
-            "1" if cfg.sfm.use_gpu else "0",
+            caps.match_use_gpu,
+            gpu_flag,
         ]
     else:
         match_cmd = [
@@ -210,14 +227,14 @@ def run_colmap(
             str(db),
             "--SequentialMatching.overlap",
             str(cfg.sfm.sequential_overlap),
-            "--SiftMatching.use_gpu",
-            "1" if cfg.sfm.use_gpu else "0",
+            caps.match_use_gpu,
+            gpu_flag,
         ]
     run_cmd(match_cmd, log_file=paths.logs / "colmap_match.log", dry_run=cfg.dry_run)
 
-    # Clean previous sparse outputs when re-running
-    if not cfg.dry_run and not cfg.skip_existing:
-        for child in sparse.iterdir():
+    # Clean previous sparse outputs when re-running a full COLMAP pass
+    if not cfg.dry_run and (not cfg.skip_existing or not _is_usable_colmap_model(model0)):
+        for child in list(sparse.iterdir()):
             if child.is_dir():
                 shutil.rmtree(child)
 

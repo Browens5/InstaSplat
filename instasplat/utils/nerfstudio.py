@@ -226,20 +226,31 @@ def run_package(cfg: PipelineConfig, paths: JobPaths, model_dir: Path) -> Packag
 
     if cfg.package.nerfstudio:
         ns_dir = paths.root / "07_nerfstudio"
-        try:
-            if not cfg.dry_run:
-                write_nerfstudio_transforms(
-                    model_dir,
-                    paths.cubemap_images,
-                    ns_dir,
-                    copy_images=cfg.package.copy_images,
-                )
-            notes.append("nerfstudio_transforms")
-            log.info("Wrote Nerfstudio dataset → %s", ns_dir)
-        except Exception as exc:  # noqa: BLE001
-            notes.append(f"nerfstudio_failed:{exc}")
-            log.warning("Nerfstudio export failed: %s", exc)
+        has_model = model_dir.exists() and (
+            (model_dir / "images.txt").exists()
+            or (model_dir.parent / f"{model_dir.name}_txt" / "images.txt").exists()
+            or (model_dir / "images.bin").exists()
+        )
+        if not has_model and (paths.root / "10_chunks").exists():
+            # Tiled parent job: export per-chunk transforms when possible
+            notes.append("nerfstudio_skipped_tiled_parent")
+            log.info("Skipping root Nerfstudio export (tiled job — see hierarchy_manifest)")
             ns_dir = None
+        else:
+            try:
+                if not cfg.dry_run and has_model:
+                    write_nerfstudio_transforms(
+                        model_dir,
+                        paths.cubemap_images,
+                        ns_dir,
+                        copy_images=cfg.package.copy_images,
+                    )
+                notes.append("nerfstudio_transforms")
+                log.info("Wrote Nerfstudio dataset → %s", ns_dir)
+            except Exception as exc:  # noqa: BLE001
+                notes.append(f"nerfstudio_failed:{exc}")
+                log.warning("Nerfstudio export failed: %s", exc)
+                ns_dir = None
 
     if cfg.package.hierarchy_manifest:
         chunk_root = paths.root / "10_chunks"

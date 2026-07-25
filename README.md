@@ -11,10 +11,13 @@ pip install -e ".[gui,dev]"
 # Check what can run on this Mac
 instasplat doctor
 
-# Run (prefer a Studio-exported equirect MP4 on macOS)
+# Best local Mac path: long 360 → tiled Metal splat
+instasplat mac-360 -i /path/to/capture_equirect_8k.mp4 -o ./runs -n beach_walk
+
+# Short clip (single scene)
 instasplat run -i /path/to/capture_equirect.mp4 -o ./runs -n beach_walk --formats ply,sog
 
-# Or launch the desktop UI
+# Desktop UI
 instasplat gui
 ```
 
@@ -36,22 +39,23 @@ instasplat gui
 Outputs land under `runs/<project>/06_export/` (`scene.ply`, `scene.sog`, …).
 Large jobs also write `quality.json`, `cloud_job.json`, and optional CPU LOD previews.
 
-### Large 8K@30fps (tiled)
+### Large / long 360 (tiled, Mac-best)
 
 ```bash
-instasplat run --large-8k -i ./capture_equirect_8k.mp4 -o ./runs -n walk_8k
+instasplat mac-360 -i ./capture_equirect_8k.mp4 -o ./runs -n walk_360
+# aliases: --large-8k / --tiled
 ```
 
 Auto-chunks the capture, densifies frames on turns using gyro, reconstructs each
 tile on Metal, aligns tiles with GPS/gyro Sim3, and merges into one large splat.
-See **[docs/LARGE_8K.md](docs/LARGE_8K.md)**.
+See **[docs/MAC_LONG_360.md](docs/MAC_LONG_360.md)** and **[docs/LARGE_8K.md](docs/LARGE_8K.md)**.
 
 Trainer backends: `--trainer brush` (default) or `--trainer opensplat` (C++ Metal MPS).
-Exports for large jobs default to `.ply`, `.sog`, and `.spz`.
+Exports default to `.ply`, `.sog`, and `.spz`. Keep the sibling `.insv` (or `gyro.csv` /
+`gps.csv`) next to the Studio MP4 for telemetry.
 
 ```bash
-# Inspect an existing job (overlap / speed / align RMSE)
-instasplat validate --job ./runs/walk_8k
+instasplat validate --job ./runs/walk_360
 ```
 
 ## macOS stitching reality check
@@ -75,9 +79,10 @@ COLMAP units are arbitrary unless you set `scale.mode`:
 
 ## Feasibility & cloud
 
-See **[docs/FEASIBILITY.md](docs/FEASIBILITY.md)**, **[docs/CLOUD.md](docs/CLOUD.md)**,
-**[docs/LARGE_8K.md](docs/LARGE_8K.md)**, **[docs/CAPTURE_GUIDELINES.md](docs/CAPTURE_GUIDELINES.md)**,
-and **[docs/RESEARCH_STRATEGIES.md](docs/RESEARCH_STRATEGIES.md)** (LongSplat, OpenSplat, hierarchical-3DGS, 3DGUT, …).
+See **[docs/MAC_LONG_360.md](docs/MAC_LONG_360.md)**, **[docs/FEASIBILITY.md](docs/FEASIBILITY.md)**,
+**[docs/CLOUD.md](docs/CLOUD.md)**, **[docs/LARGE_8K.md](docs/LARGE_8K.md)**,
+**[docs/CAPTURE_GUIDELINES.md](docs/CAPTURE_GUIDELINES.md)**, and
+**[docs/RESEARCH_STRATEGIES.md](docs/RESEARCH_STRATEGIES.md)**.
 
 ## Config
 

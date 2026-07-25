@@ -87,46 +87,131 @@ def run_plan_chunks(cfg: PipelineConfig, paths: JobPaths) -> ChunkManifest:
     return manifest
 
 
+def _extract_chunk_window(
+    cfg: PipelineConfig,
+    video: Path,
+    plan: ChunkPlan,
+    window_path: Path,
+) -> Path | None:
+    """Extract one continuous chunk window so per-frame seeks stay local (8K-critical)."""
+    if window_path.exists() and cfg.skip_existing:
+        return window_path
+    if cfg.dry_run:
+        return window_path
+    duration = max(0.1, plan.end_sec - plan.start_sec)
+    # Prefer stream copy when keyframes allow; fall back to fast re-encode.
+    copy_cmd = [
+        "ffmpeg",
+        "-y",
+        "-ss",
+        f"{plan.start_sec:.4f}",
+        "-i",
+        str(video),
+        "-t",
+        f"{duration:.4f}",
+        "-c",
+        "copy",
+        "-an",
+        str(window_path),
+    ]
+    run_cmd(
+        copy_cmd,
+        log_file=window_path.parent / "ffmpeg_window.log",
+        dry_run=False,
+        check=False,
+    )
+    if window_path.exists() and window_path.stat().st_size > 1024:
+        return window_path
+    # Re-encode fallback (accurate trim for 8K Studio exports)
+    enc_cmd = [
+        "ffmpeg",
+        "-y",
+        "-ss",
+        f"{plan.start_sec:.4f}",
+        "-i",
+        str(video),
+        "-t",
+        f"{duration:.4f}",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "18",
+        "-an",
+        str(window_path),
+    ]
+    run_cmd(
+        enc_cmd,
+        log_file=window_path.parent / "ffmpeg_window_reencode.log",
+        dry_run=False,
+        check=False,
+    )
+    return window_path if window_path.exists() else None
+
+
 def _extract_chunk_frames(
     cfg: PipelineConfig,
     video: Path,
     plan: ChunkPlan,
     out_dir: Path,
 ) -> list[Path]:
+    """
+    Extract adaptive frame times for one tile.
+
+    Strategy for long 8K on Mac:
+    1) Cut a short chunk window once (copy or veryfast x264)
+    2) Seek within that window for each sample time (avoids full-file 8K seeks)
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     existing = sorted(out_dir.glob("*.jpg")) + sorted(out_dir.glob("*.png"))
-    if existing and cfg.skip_existing:
+    if existing and cfg.skip_existing and len(existing) >= max(1, int(0.8 * len(plan.frame_times))):
+        mapping = {f"frame_{i:06d}": t for i, t in enumerate(plan.frame_times)}
+        (out_dir.parent / "frame_times.json").write_text(
+            json.dumps(mapping, indent=2),
+            encoding="utf-8",
+        )
         return existing
 
-    # Write ffmpeg concat select via individual extractions for exact times.
-    # For large counts, use a select filter expression in batches.
     frames: list[Path] = []
     ext = cfg.extract.image_format
+    if cfg.dry_run:
+        for i, t in enumerate(plan.frame_times):
+            frames.append(out_dir / f"frame_{i:06d}.{ext}")
+        mapping = {f"frame_{i:06d}": t for i, t in enumerate(plan.frame_times)}
+        (out_dir.parent / "frame_times.json").write_text(
+            json.dumps(mapping, indent=2),
+            encoding="utf-8",
+        )
+        return frames
+
+    window = out_dir.parent / "chunk_window.mp4"
+    source = _extract_chunk_window(cfg, video, plan, window) or video
+    use_relative = source == window
+
     for i, t in enumerate(plan.frame_times):
         out = out_dir / f"frame_{i:06d}.{ext}"
         if out.exists() and cfg.skip_existing:
             frames.append(out)
             continue
-        if cfg.dry_run:
-            frames.append(out)
-            continue
+        seek = max(0.0, t - plan.start_sec) if use_relative else t
         cmd = [
             "ffmpeg",
             "-y",
             "-ss",
-            f"{t:.4f}",
+            f"{seek:.4f}",
             "-i",
-            str(video),
+            str(source),
             "-frames:v",
             "1",
             "-q:v",
             "2",
             str(out),
         ]
-        run_cmd(cmd, check=False, dry_run=cfg.dry_run)
+        run_cmd(cmd, check=False, dry_run=False)
         if out.exists():
             frames.append(out)
-    # Side-car mapping frame → absolute time
+
     mapping = {f"frame_{i:06d}": t for i, t in enumerate(plan.frame_times)}
     (out_dir.parent / "frame_times.json").write_text(
         json.dumps(mapping, indent=2),
@@ -154,15 +239,23 @@ def _chunk_pipeline_config(
     child.extract.end_sec = plan.end_sec
     child.extract.fps = cfg.chunk.base_fps
     child.extract.max_frames = len(plan.frame_times)
-    # Prefer GPS scale when telemetry exists
-    if parent_paths.gps_csv.exists() and child.scale.mode == "none":
-        child.scale.mode = "gps"
+    # Prefer GPS scale when telemetry exists; otherwise keep none
+    if parent_paths.gps_csv.exists():
+        if child.scale.mode == "none":
+            child.scale.mode = "gps"
         child.scale.gps_csv = parent_paths.gps_csv
+    elif child.scale.mode == "gps":
+        child.scale.mode = "none"
     # Metal defaults
     if cfg.metal.prefer_metal:
         child.mask.device = detect_metal().torch_device
         child.train.with_viewer = False
     return child
+
+
+def _chunk_already_done(cdir: Path) -> bool:
+    ply = _find_chunk_ply(cdir)
+    return ply is not None and ply.exists()
 
 
 def process_one_chunk(
@@ -173,6 +266,10 @@ def process_one_chunk(
     log = get_logger("instasplat.chunk")
     cdir = chunk_dir(parent_paths, plan.chunk_id)
     cdir.mkdir(parents=True, exist_ok=True)
+    if cfg.skip_existing and _chunk_already_done(cdir):
+        log.info("Skipping %s — existing export PLY found", plan.chunk_id)
+        return plan.chunk_id, True, None
+
     # Copy/link ingest telemetry + video pointer into chunk workspace
     chunk_paths = JobPaths(cdir)
     chunk_paths.ensure()
@@ -205,8 +302,8 @@ def process_one_chunk(
                 shutil.copy2(src, dst)
 
     child_cfg = _chunk_pipeline_config(cfg, plan, parent_paths)
-    # Skip extract stage since frames already written; run remaining
-    child_cfg.stages = ["mask", "sfm", "refine", "scale", "train", "export"]
+    # Scale before refine so GPS/gyro pose blend operates in metric-ish units
+    child_cfg.stages = ["mask", "sfm", "scale", "refine", "train", "export"]
     # Ensure ingest video path exists for any tool that probes it
     if not chunk_paths.video.exists():
         (chunk_paths.ingest / "equirect_source.txt").write_text(str(source_video), encoding="utf-8")
@@ -298,6 +395,15 @@ def run_process_chunks(cfg: PipelineConfig, paths: JobPaths, manifest: ChunkMani
         json.dumps(results, indent=2),
         encoding="utf-8",
     )
+    ok_n = sum(1 for v in results.values() if v)
+    fail_n = len(results) - ok_n
+    log.info("Chunk processing: %d ok, %d failed (of %d)", ok_n, fail_n, len(results))
+    if fail_n and not cfg.allow_partial_merge and not cfg.dry_run:
+        failed = [k for k, v in results.items() if not v]
+        raise RuntimeError(
+            f"{fail_n} chunk(s) failed: {', '.join(failed)}. "
+            "Re-run to resume successful tiles, or pass --allow-partial-merge."
+        )
     return results
 
 
@@ -491,12 +597,14 @@ def run_merge_chunks(
             )
 
     transformed: list[Path] = []
+    missing: list[str] = []
 
     st_bin = cfg.export.splat_transform_bin
     for plan in manifest.chunks:
         ply = _find_chunk_ply(chunk_dir(paths, plan.chunk_id))
         if ply is None:
             log.warning("No PLY for %s — skipping", plan.chunk_id)
+            missing.append(plan.chunk_id)
             continue
         align = by_id.get(plan.chunk_id)
         dest = merge_dir / f"{plan.chunk_id}_world.ply"
@@ -510,10 +618,16 @@ def run_merge_chunks(
         args = [st_bin, str(ply), "-N", *align.sim3.to_splat_transform_args(), str(dest)]
         if not cfg.export.filter_nan:
             args = [st_bin, str(ply), *align.sim3.to_splat_transform_args(), str(dest)]
-        run_cmd(args, log_file=paths.logs / f"merge_{plan.chunk_id}.log", dry_run=False, check=False)
-        if dest.exists():
-            transformed.append(dest)
+        run_cmd(args, log_file=paths.logs / f"merge_{plan.chunk_id}.log", dry_run=False, check=True)
+        if not dest.exists():
+            raise RuntimeError(f"splat-transform failed to write {dest}")
+        transformed.append(dest)
 
+    if missing and not cfg.allow_partial_merge:
+        raise RuntimeError(
+            f"Missing PLYs for chunks: {', '.join(missing)}. "
+            "Fix failed tiles or pass --allow-partial-merge."
+        )
     if not transformed:
         raise RuntimeError("No chunk PLYs available to merge")
 
@@ -526,11 +640,12 @@ def run_merge_chunks(
     if prune and prune > 0:
         merge_cmd.extend(["-c", f"opacity,gt,{prune}"])
     merge_cmd.append(str(merged_ply))
-    run_cmd(merge_cmd, log_file=paths.logs / "merge_all.log", dry_run=False, check=False)
+    run_cmd(merge_cmd, log_file=paths.logs / "merge_all.log", dry_run=False, check=True)
+    if not merged_ply.exists():
+        raise RuntimeError(f"Merge failed — expected {merged_ply}")
 
     canonical = paths.export / "scene.ply"
-    if merged_ply.exists():
-        shutil.copy2(merged_ply, canonical)
+    shutil.copy2(merged_ply, canonical)
     outputs["ply"] = canonical
 
     for fmt in cfg.export.formats:
@@ -547,7 +662,7 @@ def run_merge_chunks(
         if prune and prune > 0:
             cmd.extend(["-c", f"opacity,gt,{prune}"])
         cmd.append(str(dest))
-        run_cmd(cmd, log_file=paths.logs / f"export_merged_{fmt}.log", dry_run=False, check=False)
+        run_cmd(cmd, log_file=paths.logs / f"export_merged_{fmt}.log", dry_run=False, check=True)
         outputs[fmt] = dest
 
     if cfg.export.streamed_lod:

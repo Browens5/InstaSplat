@@ -136,7 +136,7 @@ class MainWindow(QMainWindow):
 
         brand = QLabel("InstaSplat")
         brand.setObjectName("brand")
-        tag = QLabel("INSV → YOLO masks → COLMAP → Brush → .ply / .sog")
+        tag = QLabel("Long 360 → tiled Metal splat (YOLO MPS → COLMAP → Brush → ply/sog/spz)")
         tag.setObjectName("tagline")
         layout.addWidget(brand)
         layout.addWidget(tag)
@@ -178,7 +178,9 @@ class MainWindow(QMainWindow):
         self.mask_cb.setChecked(True)
         opts_form.addRow(self.mask_cb)
 
-        self.large_8k_cb = QCheckBox("Large 8K@30 tiled mode (auto-chunk + gyro/GPS align + Metal)")
+        self.large_8k_cb = QCheckBox(
+            "Mac long-360 tiled mode (best local: auto-chunk + Metal + GPS/gyro merge)"
+        )
         self.large_8k_cb.setChecked(True)
         opts_form.addRow(self.large_8k_cb)
 
@@ -240,9 +242,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.log, 1)
 
         note = QLabel(
-            "8K@30: tiles are auto-chunked with gyro-dense sampling, aligned via GPS/gyro, "
-            "and trained with Brush on Metal. Stitch equirect MP4 in Insta360 Studio first "
-            "(MediaSDK is Windows/Linux)."
+            "Best local Mac path: Studio equirect MP4 (+ sibling INSV for gyro/GPS) → "
+            "tiled YOLO/COLMAP/Brush on Metal → merged ply/sog/spz. "
+            "See docs/MAC_LONG_360.md. CUDA tools (LingBot-Map, 3DGUT) stay cloud-side."
         )
         note.setWordWrap(True)
         note.setObjectName("tagline")
@@ -285,7 +287,8 @@ class MainWindow(QMainWindow):
             project_name=self.name_edit.text().strip() or "instasplat_job",
         )
         if self.large_8k_cb.isChecked():
-            cfg.enable_large_8k_defaults()
+            cfg.enable_mac_long_360_defaults()
+            cfg.chunk.base_fps = float(self.fps.value())
         else:
             cfg.extract.fps = float(self.fps.value())
         cfg.mask.enabled = self.mask_cb.isChecked()
@@ -299,8 +302,6 @@ class MainWindow(QMainWindow):
         cfg.scale.mode = self.scale_mode.currentText()  # type: ignore[assignment]
         cfg.train.total_steps = int(self.steps.value())
         cfg.export.formats = formats  # type: ignore[assignment]
-        if self.large_8k_cb.isChecked():
-            cfg.chunk.base_fps = float(self.fps.value())
         return cfg
 
     def _run(self) -> None:

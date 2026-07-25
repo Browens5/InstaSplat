@@ -99,17 +99,26 @@ def run_scale(cfg: PipelineConfig, paths: JobPaths, sfm_model: Path) -> ScaleRes
     elif mode == "gps":
         gps_path = cfg.scale.gps_csv or paths.gps_csv
         if not gps_path.exists():
-            raise FileNotFoundError(f"GPS CSV not found: {gps_path}")
+            # Soft fallback — Studio MP4 jobs often lack trailer GPS until sidecar/INSV pair
+            log.warning(
+                "GPS CSV not found (%s); falling back to scale.mode=none",
+                gps_path,
+            )
+            if out.exists():
+                shutil.rmtree(out)
+            if not cfg.dry_run:
+                shutil.copytree(sfm_model, out)
+                (paths.scale / "scale_factor.txt").write_text("1.0\n", encoding="utf-8")
+                (paths.scale / "SCALE_NOTE.txt").write_text(
+                    "Requested GPS scale but gps.csv was missing. Output is NOT metric.\n",
+                    encoding="utf-8",
+                )
+            return ScaleResult(out, 1.0, "none_gps_missing")
         images = read_images_txt(txt_model / "images.txt") if txt_model else []
         centers = camera_centers(images)
         gps_xyz = _load_gps(gps_path)
         # Resample GPS path length vs camera path — simple global scale
-        # Align lengths by interpolating GPS to N camera samples via arc-length param
-        if len(gps_xyz) != len(centers):
-            # Use total path length ratio only
-            scale = scale_factor_from_gps_path(centers, gps_xyz)
-        else:
-            scale = scale_factor_from_gps_path(centers, gps_xyz)
+        scale = scale_factor_from_gps_path(centers, gps_xyz)
     elif mode == "stereo_baseline":
         log.warning(
             "stereo_baseline scale is approximate and expects paired dual-lens poses; "

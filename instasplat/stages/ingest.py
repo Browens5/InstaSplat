@@ -265,6 +265,70 @@ def resolve_video_source(cfg: PipelineConfig, paths: JobPaths) -> tuple[Path, st
     raise RuntimeError(f"Unhandled stitch mode: {mode}")
 
 
+def _resolve_telemetry_source(src: Path) -> Path | None:
+    """Find an INSV that can provide gyro/GPS (input itself or sibling of Studio MP4)."""
+    if src.suffix.lower() == ".insv" and src.exists():
+        return src
+    if src.suffix.lower() not in {".mp4", ".mov"}:
+        return None
+    candidates = [
+        src.with_suffix(".insv"),
+        src.with_name(src.stem.replace("_equirect", "").replace("_360", "") + ".insv"),
+        src.with_name(src.stem + ".insv"),
+    ]
+    # Common Insta360 dual-file naming next to a Studio export
+    stem = src.stem
+    for mid in ("_00_", "_10_"):
+        if mid in stem:
+            candidates.append(src.with_name(stem + ".insv"))
+    # Any nearby *.insv with similar stem prefix
+    parent = src.parent
+    if parent.exists():
+        prefix = stem.split("_equirect")[0].split("_360")[0][:12]
+        for p in sorted(parent.glob("*.insv")):
+            if prefix and prefix in p.stem:
+                candidates.append(p)
+    for c in candidates:
+        if c.exists():
+            return c
+    return None
+
+
+def _load_sidecar_csvs(
+    src: Path,
+    paths: JobPaths,
+    gyro_csv: Path | None,
+    gps_csv: Path | None,
+    accel_csv: Path | None,
+    metadata: dict[str, Any],
+) -> tuple[Path | None, Path | None, Path | None]:
+    """Copy gyro.csv / gps.csv / accel.csv placed beside the input video."""
+    sidecars = {
+        "gyro.csv": paths.gyro_csv,
+        "gps.csv": paths.gps_csv,
+        "accel.csv": paths.accel_csv,
+    }
+    found: list[str] = []
+    for name, dest in sidecars.items():
+        candidate = src.with_name(name)
+        alt = src.with_name(src.stem + f".{name}")
+        pick = candidate if candidate.exists() else alt if alt.exists() else None
+        if pick is None:
+            continue
+        if not dest.exists() or pick.stat().st_mtime > dest.stat().st_mtime:
+            shutil.copy2(pick, dest)
+        found.append(name)
+        if name == "gyro.csv":
+            gyro_csv = dest
+        elif name == "gps.csv":
+            gps_csv = dest
+        else:
+            accel_csv = dest
+    if found:
+        metadata["sidecar_csvs"] = found
+    return gyro_csv, gps_csv, accel_csv
+
+
 def run_ingest(cfg: PipelineConfig, paths: JobPaths) -> IngestResult:
     paths.ensure()
     log = get_logger("instasplat.ingest", paths.logs / "ingest.log")
@@ -284,9 +348,10 @@ def run_ingest(cfg: PipelineConfig, paths: JobPaths) -> IngestResult:
     }
 
     gyro_csv = accel_csv = gps_csv = None
-    if src.suffix.lower() == ".insv" and not cfg.dry_run:
+    telemetry_src = _resolve_telemetry_source(src)
+    if telemetry_src is not None and not cfg.dry_run:
         try:
-            trailer = _parse_insv_trailer(src)
+            trailer = _parse_insv_trailer(telemetry_src)
             if trailer["gyro"]:
                 gyro_csv = paths.gyro_csv
                 _write_csv(gyro_csv, "timestamp_ms,gx,gy,gz", trailer["gyro"])
@@ -296,6 +361,7 @@ def run_ingest(cfg: PipelineConfig, paths: JobPaths) -> IngestResult:
             if trailer["gps"]:
                 gps_csv = paths.gps_csv
                 _write_csv(gps_csv, "timestamp_ms,lat,lon,alt", trailer["gps"])
+            metadata["telemetry_source"] = str(telemetry_src)
             metadata["trailer_counts"] = {
                 "gyro": len(trailer["gyro"]),
                 "accel": len(trailer["accel"]),
@@ -303,8 +369,14 @@ def run_ingest(cfg: PipelineConfig, paths: JobPaths) -> IngestResult:
                 "gps": len(trailer["gps"]),
             }
         except Exception as exc:  # noqa: BLE001 — trailer formats vary by camera gen
-            log.warning("INSV trailer parse failed: %s", exc)
+            log.warning("INSV trailer parse failed (%s): %s", telemetry_src, exc)
             metadata["trailer_error"] = str(exc)
+
+    # Sidecar CSVs next to Studio MP4 (override / fill missing trailer fields)
+    if not cfg.dry_run:
+        gyro_csv, gps_csv, accel_csv = _load_sidecar_csvs(
+            src, paths, gyro_csv, gps_csv, accel_csv, metadata
+        )
 
     metadata["exif"] = _exiftool_metadata(src, cfg.dry_run)
     paths.metadata_json.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")

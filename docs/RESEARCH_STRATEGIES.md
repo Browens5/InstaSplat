@@ -111,11 +111,14 @@ InstaSplat’s Mac-local, tiled 8K pipeline.
 10. `cloud_job.json` for 3DGUT / LichtFeld / splatfacto workers.
 11. CPU LOD previews from hierarchy anchors (XYZ+opacity; Kerbl CUDA still cloud).
 
-### Next
-1. **Native equirect training** via cloud 3DGUT/gsplat when MediaSDK stitch is imperfect
-   (manifest ready; worker runner TBD).
-2. **Kerbl hierarchy merger** binary integration for true LOD trees.
-3. **MASt3R / on-the-fly** learned pose init (beyond gyro/GPS prior).
+### Local Mac long-360 (shipped)
+See `instasplat mac-360` / [MAC_LONG_360.md](MAC_LONG_360.md): windowed ffmpeg extract,
+preflight gates, INSV/sidecar telemetry, scale-before-refine, resume tiles, merge checks.
+
+### Next (cloud / research)
+1. **LingBot-Map** as CUDA cloud SfM backend (streaming poses+depth) → COLMAP/Nerfstudio export.
+2. **Native equirect training** via cloud 3DGUT/gsplat (manifest ready; worker runner TBD).
+3. **Kerbl hierarchy merger** binary integration for true LOD trees.
 4. Full Self-Cali distortion network (iResNet) for raw fisheye.
 
 ### Later / cloud-only

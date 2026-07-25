@@ -214,8 +214,8 @@ class PipelineConfig:
             "extract",
             "mask",
             "sfm",
-            "refine",
             "scale",
+            "refine",
             "train",
             "export",
             "package",
@@ -223,12 +223,25 @@ class PipelineConfig:
     )
     dry_run: bool = False
     skip_existing: bool = True
+    # Mac long-360 safety rails
+    preflight: bool = True
+    allow_unstitched: bool = False  # dual-fisheye remux is opt-in only
+    allow_partial_merge: bool = False  # require all successful tiles by default
 
     def work_dir(self) -> Path:
         return self.output_dir / self.project_name
 
     def enable_large_8k_defaults(self) -> None:
-        """Apply recommended settings for 8K@30 large tiled splats on Metal."""
+        """Alias for Mac long-360 tiled defaults."""
+        self.enable_mac_long_360_defaults()
+
+    def enable_mac_long_360_defaults(self) -> None:
+        """
+        Best local-Mac settings for long 360 video → tiled Gaussian splat.
+
+        Metal-first: YOLO MPS → COLMAP CPU cubemap → Brush/OpenSplat Metal →
+        GPS/gyro tile align → splat-transform merge. No CUDA / LingBot-Map.
+        """
         self.mode = "tiled"
         self.chunk.enabled = True
         self.chunk.base_fps = 6.0
@@ -237,33 +250,42 @@ class PipelineConfig:
         self.chunk.duration_sec = 25.0
         self.chunk.overlap_sec = 5.0
         self.chunk.max_frames_per_chunk = 180
+        self.chunk.min_overlap_ratio = 0.15
+        self.chunk.merge_prune_opacity = 0.05
         self.metal.prefer_metal = True
         self.metal.serialize_brush = True
-        # Device resolved at runtime via detect_metal()
         self.mask.device = "mps"
+        self.sfm.mode = "perspective_cubemap"
         self.sfm.face_resolution = 1280
         self.sfm.quality = "high"
+        self.sfm.matcher = "sequential"
+        self.sfm.sequential_overlap = 18
+        self.sfm.telemetry_fallback = True
         self.train.max_resolution = 1600
         self.train.total_steps = 20_000
         self.train.backend = "brush"
-        # LichtFeld / Niantic delivery set
+        self.train.with_viewer = False
         self.export.formats = ["ply", "sog", "spz"]
         self.export.min_opacity = 0.05
         self.export.streamed_lod = True
-        self.chunk.merge_prune_opacity = 0.05
         self.refine.enabled = True
         self.refine.pose_blend = 0.25
+        self.refine.max_align_rmse_m = 8.0
         self.package.nerfstudio = True
         self.package.hierarchy_manifest = True
         self.package.cpu_lod = True
         self.package.cloud_manifest = True
         self.package.quality_report = True
-        self.sfm.telemetry_fallback = True
+        self.preflight = True
+        self.allow_unstitched = False
+        self.allow_partial_merge = False
+        # Prefer GPS when available; preflight soft-falls back to none
         if self.scale.mode == "none":
             self.scale.mode = "gps"
         self.stages = [
             "ingest",
             "plan_chunks",
+            "preflight",
             "process_chunks",
             "align_chunks",
             "merge_chunks",
@@ -323,6 +345,9 @@ class PipelineConfig:
             stages=list(data.get("stages") or []),
             dry_run=bool(data.get("dry_run", False)),
             skip_existing=bool(data.get("skip_existing", True)),
+            preflight=bool(data.get("preflight", True)),
+            allow_unstitched=bool(data.get("allow_unstitched", False)),
+            allow_partial_merge=bool(data.get("allow_partial_merge", False)),
         )
 
     @classmethod
@@ -402,7 +427,11 @@ package:
   cloud_manifest: true
   quality_report: true
 
-stages: [ingest, plan_chunks, process_chunks, align_chunks, merge_chunks, package]
+preflight: true
+allow_unstitched: false
+allow_partial_merge: false
+
+stages: [ingest, plan_chunks, preflight, process_chunks, align_chunks, merge_chunks, package]
 skip_existing: true
 """
 
@@ -464,5 +493,9 @@ package:
   cloud_manifest: true
   quality_report: true
 
-stages: [ingest, plan_chunks, process_chunks, align_chunks, merge_chunks, package]
+preflight: true
+allow_unstitched: false
+allow_partial_merge: false
+
+stages: [ingest, plan_chunks, preflight, process_chunks, align_chunks, merge_chunks, package]
 """

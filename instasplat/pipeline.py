@@ -103,12 +103,13 @@ class Pipeline:
         "extract",
         "mask",
         "sfm",
-        "refine",
         "scale",
+        "refine",
         "train",
         "export",
         "package",
         "plan_chunks",
+        "preflight",
         "process_chunks",
         "align_chunks",
         "merge_chunks",
@@ -117,6 +118,7 @@ class Pipeline:
     TILED_ORDER: ClassVar[list[str]] = [
         "ingest",
         "plan_chunks",
+        "preflight",
         "process_chunks",
         "align_chunks",
         "merge_chunks",
@@ -149,8 +151,8 @@ class Pipeline:
                     "extract",
                     "mask",
                     "sfm",
-                    "refine",
                     "scale",
+                    "refine",
                     "train",
                     "export",
                     "package",
@@ -240,11 +242,9 @@ class Pipeline:
                             mode="telemetry_fallback",
                             num_images=fb.n_poses,
                         )
-        elif name == "refine":
-            model = result.sfm.model_dir if result.sfm else paths.colmap_model
-            result.refine = run_refine(cfg, paths, model)
         elif name == "scale":
-            model = self._active_model(result)
+            # Scale before refine so GPS/gyro blend uses metric-ish units
+            model = result.sfm.model_dir if result.sfm else paths.colmap_model
             if not model.exists() and not cfg.dry_run:
                 candidates = list(paths.colmap_sparse.glob("*"))
                 dirs = [c for c in candidates if c.is_dir() and not c.name.endswith("_txt")]
@@ -252,15 +252,25 @@ class Pipeline:
                     raise FileNotFoundError("No COLMAP model found; run sfm first")
                 model = dirs[0]
             result.scale = run_scale(cfg, paths, model)
-        elif name == "train":
+        elif name == "refine":
             model = (
                 result.scale.model_dir
                 if result.scale is not None and result.scale.model_dir.exists()
-                else paths.scaled_model
+                else (result.sfm.model_dir if result.sfm else paths.colmap_model)
             )
-            if not model.exists():
-                model = self._active_model(result)
+            result.refine = run_refine(cfg, paths, model)
+        elif name == "train":
+            model = self._active_model(result)
             result.train = run_train(cfg, paths, model)
+        elif name == "preflight":
+            from instasplat.utils.preflight import run_preflight
+
+            if cfg.preflight:
+                pf = run_preflight(cfg, paths)
+                if not cfg.dry_run:
+                    pf.raise_if_blocked()
+            else:
+                self.log.info("Preflight skipped (cfg.preflight=false)")
         elif name == "export":
             ply = result.train.ply_path if result.train else None
             result.export = run_export(cfg, paths, ply)
@@ -268,6 +278,8 @@ class Pipeline:
             model = self._active_model(result)
             if paths.scaled_model.exists():
                 model = paths.scaled_model
+            # Tiled parent jobs often have no root COLMAP — package still writes
+            # hierarchy / cloud / quality from chunk artifacts.
             result.package = run_package(cfg, paths, model)
         elif name == "plan_chunks":
             self._manifest = run_plan_chunks(cfg, paths)

@@ -246,16 +246,25 @@ def report_dict(
 
 def _ready_stages(deps: list[DepStatus]) -> dict[str, bool]:
     by_name = {d.name: d for d in deps}
+    train_ok = by_name.get("brush", DepStatus("brush", False)).available or by_name.get(
+        "opensplat", DepStatus("opensplat", False)
+    ).available
+    mac_long_360 = (
+        by_name.get("ffmpeg", DepStatus("ffmpeg", False)).available
+        and by_name.get("colmap", DepStatus("colmap", False)).available
+        and train_ok
+        and by_name.get("splat-transform", DepStatus("splat-transform", False)).available
+    )
     return {
         "ingest": by_name.get("exiftool", DepStatus("exiftool", False)).available
         or by_name.get("ffmpeg", DepStatus("ffmpeg", False)).available,
         "extract": by_name.get("ffmpeg", DepStatus("ffmpeg", False)).available,
         "mask": by_name.get("ultralytics", DepStatus("ultralytics", False)).available,
         "sfm": by_name.get("colmap", DepStatus("colmap", False)).available,
-        "train": by_name.get("brush", DepStatus("brush", False)).available
-        or by_name.get("opensplat", DepStatus("opensplat", False)).available,
+        "train": train_ok,
         "export": by_name.get("splat-transform", DepStatus("splat-transform", False)).available,
         "official_stitch": by_name.get("MediaSDKTest", DepStatus("MediaSDKTest", False)).available,
+        "mac_long_360": mac_long_360,
     }
 
 

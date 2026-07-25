@@ -59,4 +59,8 @@ package:
   cloud_manifest: true
   quality_report: true
 
-stages: [ingest, plan_chunks, process_chunks, align_chunks, merge_chunks, package]
+preflight: true
+allow_unstitched: false
+allow_partial_merge: false
+
+stages: [ingest, plan_chunks, preflight, process_chunks, align_chunks, merge_chunks, package]

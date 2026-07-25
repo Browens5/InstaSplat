@@ -59,9 +59,13 @@ def doctor(
             "Export a stitched equirectangular MP4 from Insta360 Studio, or use a Linux "
             "cloud/Docker worker for MediaSDK stitching."
         )
+    ready = data["ready_stages"].get("mac_long_360")
     console.print(
-        "\n[cyan]Large 8K tip:[/cyan] use `instasplat run --large-8k ...` to auto-chunk, "
-        "gyro/GPS-align tiles, and prefer Metal for YOLO + Brush."
+        f"\n[cyan]Mac long-360 ready:[/cyan] {'yes' if ready else 'no — install missing tools above'}"
+    )
+    console.print(
+        "[cyan]Tip:[/cyan] `instasplat mac-360 -i ./capture_equirect_8k.mp4 -o ./runs -n walk` "
+        "for the best local tiled Metal pipeline."
     )
 
 
@@ -101,7 +105,7 @@ def run(
     large_8k: bool = typer.Option(
         False,
         "--large-8k",
-        help="Enable tiled 8K@30 mode: auto-chunk, gyro/GPS align, Metal-first",
+        help="Enable Mac long-360 tiled mode (alias of mac-360 defaults)",
     ),
     tiled: bool = typer.Option(False, "--tiled", help="Alias for enabling chunk.mode=tiled"),
     trainer: str | None = typer.Option(
@@ -117,8 +121,110 @@ def run(
         False, "--no-cloud-manifest", help="Skip writing cloud_job.json"
     ),
     no_quality: bool = typer.Option(False, "--no-quality", help="Skip quality.json report"),
+    no_preflight: bool = typer.Option(False, "--no-preflight", help="Skip Mac long-360 preflight"),
+    allow_unstitched: bool = typer.Option(
+        False, "--allow-unstitched", help="Allow dual-fisheye remux (testing only)"
+    ),
+    allow_partial_merge: bool = typer.Option(
+        False, "--allow-partial-merge", help="Merge even if some tiles failed"
+    ),
 ) -> None:
     """Run the reconstruction pipeline."""
+    cfg = _build_run_config(
+        input_path=input_path,
+        output_dir=output_dir,
+        project_name=project_name,
+        config=config,
+        stages=stages,
+        fps=fps,
+        no_mask=no_mask,
+        export_formats=export_formats,
+        dry_run=dry_run,
+        with_viewer=with_viewer,
+        large_8k=large_8k or tiled,
+        trainer=trainer,
+        no_refine=no_refine,
+        streamed_lod=streamed_lod,
+        no_cloud_manifest=no_cloud_manifest,
+        no_quality=no_quality,
+        no_preflight=no_preflight,
+        allow_unstitched=allow_unstitched,
+        allow_partial_merge=allow_partial_merge,
+    )
+    _execute_pipeline(cfg)
+
+
+@app.command("mac-360")
+def mac_360(
+    input_path: Path = typer.Option(
+        ..., "--input", "-i", help="Studio equirect MP4 (preferred) or INSV+sibling MP4"
+    ),
+    output_dir: Path = typer.Option(DEFAULT_OUT, "--output", "-o"),
+    project_name: str = typer.Option("walk_360", "--name", "-n"),
+    trainer: str = typer.Option("brush", "--trainer", help="brush | opensplat"),
+    no_mask: bool = typer.Option(False, help="Disable YOLO people masking"),
+    dry_run: bool = typer.Option(False, help="Plan chunks + preflight only"),
+    allow_unstitched: bool = typer.Option(False, "--allow-unstitched"),
+    allow_partial_merge: bool = typer.Option(False, "--allow-partial-merge"),
+    formats: str = typer.Option("ply,sog,spz", "--formats"),
+) -> None:
+    """
+    Best local Mac pipeline: long 360 video → tiled Metal Gaussian splat.
+
+    Expects a stitched equirectangular MP4 from Insta360 Studio. Keep the
+    original .insv beside it (or gyro.csv/gps.csv sidecars) for turn densify
+    and metric GPS scale.
+    """
+    console.print(
+        "[bold cyan]InstaSplat mac-360[/bold cyan] — tiled Metal pipeline "
+        "(YOLO MPS → COLMAP → Brush/OpenSplat → GPS/gyro merge)"
+    )
+    cfg = _build_run_config(
+        input_path=input_path,
+        output_dir=output_dir,
+        project_name=project_name,
+        config=None,
+        stages=None,
+        fps=None,
+        no_mask=no_mask,
+        export_formats=formats,
+        dry_run=dry_run,
+        with_viewer=False,
+        large_8k=True,
+        trainer=trainer,
+        no_refine=False,
+        streamed_lod=True,
+        no_cloud_manifest=False,
+        no_quality=False,
+        no_preflight=False,
+        allow_unstitched=allow_unstitched,
+        allow_partial_merge=allow_partial_merge,
+    )
+    _execute_pipeline(cfg)
+
+
+def _build_run_config(
+    *,
+    input_path: Path | None,
+    output_dir: Path,
+    project_name: str,
+    config: Path | None,
+    stages: str | None,
+    fps: float | None,
+    no_mask: bool,
+    export_formats: str | None,
+    dry_run: bool,
+    with_viewer: bool,
+    large_8k: bool,
+    trainer: str | None,
+    no_refine: bool,
+    streamed_lod: bool,
+    no_cloud_manifest: bool,
+    no_quality: bool,
+    no_preflight: bool,
+    allow_unstitched: bool,
+    allow_partial_merge: bool,
+) -> PipelineConfig:
     if config is not None:
         cfg = PipelineConfig.load(config)
         if input_path is not None:
@@ -134,8 +240,8 @@ def run(
             project_name=project_name,
         )
 
-    if large_8k or tiled:
-        cfg.enable_large_8k_defaults()
+    if large_8k:
+        cfg.enable_mac_long_360_defaults()
     if trainer:
         if trainer not in {"brush", "opensplat"}:
             raise typer.BadParameter("trainer must be 'brush' or 'opensplat'")
@@ -148,6 +254,12 @@ def run(
         cfg.package.cloud_manifest = False
     if no_quality:
         cfg.package.quality_report = False
+    if no_preflight:
+        cfg.preflight = False
+    if allow_unstitched:
+        cfg.allow_unstitched = True
+    if allow_partial_merge:
+        cfg.allow_partial_merge = True
     if stages:
         cfg.stages = [s.strip() for s in stages.split(",") if s.strip()]
     if fps is not None:
@@ -162,7 +274,10 @@ def run(
     if with_viewer:
         cfg.train.with_viewer = True
         cfg.metal.serialize_brush = False
+    return cfg
 
+
+def _execute_pipeline(cfg: PipelineConfig) -> None:
     with Progress() as progress:
         task = progress.add_task("pipeline", total=1.0)
 
@@ -180,10 +295,12 @@ def run(
         if result.tiled and result.tiled.chunk_results:
             ok = sum(1 for v in result.tiled.chunk_results.values() if v)
             console.print(f"  chunks ok: {ok}/{len(result.tiled.chunk_results)}")
-        if result.package and result.package.quality_report:
-            console.print(f"  quality: {result.package.quality_report}")
-        if result.package and result.package.cloud_job:
-            console.print(f"  cloud job: {result.package.cloud_job}")
+        qpath = result.paths.root / "quality.json"
+        if qpath.exists():
+            console.print(f"  quality: {qpath}")
+        if (result.paths.root / "cloud_job.json").exists():
+            console.print(f"  cloud job: {result.paths.root / 'cloud_job.json'}")
+        console.print(f"  preflight: {result.paths.root / 'preflight.json'}")
     else:
         console.print(f"[red]Failed[/red]: {result.error}")
         raise typer.Exit(code=1)

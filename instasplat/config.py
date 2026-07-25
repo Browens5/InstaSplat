@@ -176,6 +176,10 @@ class TrainConfig:
     # metal_equirect knobs
     sh_degree: int = 1
     lr: float = 0.01
+    with_eval3d: bool = True
+    composite: str = "tile"  # tile | oit
+    sh_warmup_steps: int = 500
+    densify_every: int = 200
 
 
 @dataclass
@@ -418,6 +422,10 @@ train:
   opensplat_bin: opensplat
   sh_degree: 1              # metal_equirect SH degree (0 or 1)
   lr: 0.01                  # metal_equirect Adam base LR
+  with_eval3d: true         # 3DGUT-style 3D response opacity modulation
+  composite: tile           # tile (sorted) | oit (faster)
+  sh_warmup_steps: 500
+  densify_every: 200
 
 export:
   formats: [ply, sog, spz]

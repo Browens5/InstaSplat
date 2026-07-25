@@ -19,6 +19,7 @@ class MetalEquirectResult:
     device: str
     n_gaussians: int
     final_loss: float
+    preview_path: Path | None = None
 
 
 def run_metal_equirect_train(
@@ -44,7 +45,6 @@ def run_metal_equirect_train(
         ) from exc
 
     max_w = int(cfg.train.max_resolution)
-    # Equirect width; clamp for laptop friendliness
     max_w = max(256, min(max_w, 4096))
     dataset = load_equirect_dataset(paths, model_dir, max_width=max_w)
     log.info(
@@ -54,13 +54,26 @@ def run_metal_equirect_train(
         max_w,
     )
 
-    # Allow knobs via extra_args style fields on TrainConfig
-    sh_degree = int(getattr(cfg.train, "sh_degree", 1))
-    lr = float(getattr(cfg.train, "lr", 0.01))
+    sh_degree = int(cfg.train.sh_degree)
+    lr = float(cfg.train.lr)
     steps = int(cfg.train.total_steps)
-    # Safer default steps if user left Brush-scale 30k — still OK, but log hint
+    composite = str(cfg.train.composite or "tile")
+    if composite not in {"tile", "oit"}:
+        log.warning("Unknown composite=%s; using tile", composite)
+        composite = "tile"
     if steps > 50_000:
-        log.warning("total_steps=%d is high for metal_equirect v1; consider 10k–20k", steps)
+        log.warning("total_steps=%d is high for metal_equirect; consider 10k–20k", steps)
+
+    def _progress(ev: dict) -> None:
+        # Lightweight heartbeat file for GUI / external monitors
+        if ev.get("step", 0) % 25 == 0 or ev.get("step") == ev.get("total_steps"):
+            hb = export_dir / "train_heartbeat.json"
+            try:
+                import json
+
+                hb.write_text(json.dumps(ev), encoding="utf-8")
+            except OSError:
+                pass
 
     stats = train_equirect(
         dataset,
@@ -69,7 +82,12 @@ def run_metal_equirect_train(
         export_every=max(1, int(cfg.train.export_every)),
         sh_degree=sh_degree,
         lr=lr,
+        with_eval3d=bool(cfg.train.with_eval3d),
+        composite=composite,
+        sh_warmup_steps=int(cfg.train.sh_warmup_steps),
+        densify_every=int(cfg.train.densify_every),
         prefer_mps=bool(cfg.metal.prefer_metal),
+        on_progress=_progress,
         log=log,
     )
     log.info(
@@ -86,4 +104,5 @@ def run_metal_equirect_train(
         device=stats.device,
         n_gaussians=stats.n_gaussians,
         final_loss=stats.final_loss,
+        preview_path=stats.preview_path,
     )

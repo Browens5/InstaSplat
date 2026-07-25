@@ -87,8 +87,11 @@ CUDA **gsplat 3DGUT** remains the cloud upgrade for large jobs (`cloud_job.json`
 
 ## Roadmap
 
-1. ~~Core UT equirect rasterizer + train loop + PLY export~~ (this package)
-2. Tile-based Metal raster kernels + sorting (parity with gsplat speed)
-3. Full MCMC densification + SH degree schedule
-4. GUI live preview of equirect renders during training
-5. Optional eval3d particle response (closer 3DGUT parity)
+1. ~~Core UT equirect rasterizer + train loop + PLY export~~
+2. ~~Tile-based compositing + OIT fast path~~
+3. ~~MCMC densify/prune + SH warmup schedule~~
+4. ~~eval3d opacity modulation (3DGUT-inspired)~~
+5. ~~Preview JPEGs + `train_heartbeat.json` + Artifacts tab~~
+6. ~~`instasplat train-equirect` CLI + binary COLMAP `images.bin`~~
+7. Native Metal kernel dispatch for UT projection (metallib compile ready)
+8. Faster tile sort / max-per-tile GPU path (gsplat parity)

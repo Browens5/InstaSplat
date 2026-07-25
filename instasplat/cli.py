@@ -471,6 +471,55 @@ def _execute_pipeline(cfg: PipelineConfig) -> None:
         raise typer.Exit(code=1)
 
 
+@app.command("train-equirect")
+def train_equirect_cmd(
+    job: Path = typer.Option(..., "--job", "-j", help="Job folder with equirect frames + SfM"),
+    steps: int | None = typer.Option(None, help="Override train.total_steps"),
+    max_resolution: int | None = typer.Option(None, help="Equirect train width"),
+    composite: str = typer.Option("tile", help="tile | oit"),
+    no_eval3d: bool = typer.Option(False, "--no-eval3d", help="Disable 3D response term"),
+    dry_run: bool = typer.Option(False, help="Load dataset only"),
+) -> None:
+    """Run the Mac-native metal_equirect trainer on an existing job."""
+    from instasplat.metal_equirect.backend import run_metal_equirect_train
+    from instasplat.utils.jobs import inspect_job
+    from instasplat.utils.paths import JobPaths
+
+    info = inspect_job(job)
+    cfg = info.config
+    cfg.train.backend = "metal_equirect"
+    cfg.dry_run = dry_run
+    if steps is not None:
+        cfg.train.total_steps = steps
+    if max_resolution is not None:
+        cfg.train.max_resolution = max_resolution
+    cfg.train.composite = composite  # type: ignore[assignment]
+    cfg.train.with_eval3d = not no_eval3d
+    paths = JobPaths(info.job_dir)
+    # Prefer refined → scaled → colmap model
+    model = paths.root / "03b_refine" / "sparse" / "0"
+    if not (model / "images.txt").exists() and not (model / "images.bin").exists():
+        model = paths.scaled_model
+    if not (model / "images.txt").exists() and not (model / "images.bin").exists():
+        model = paths.colmap_model
+    console.print(
+        f"[cyan]metal_equirect[/cyan] job={paths.root} model={model} "
+        f"steps={cfg.train.total_steps} composite={cfg.train.composite}"
+    )
+    result = run_metal_equirect_train(cfg, paths, model)
+    if cfg.dry_run:
+        console.print("[green]dry_run OK[/green]")
+        return
+    console.print(
+        f"[green]OK[/green] device={result.device} gaussians={result.n_gaussians} "
+        f"loss={result.final_loss:.5f}"
+    )
+    if result.ply_path:
+        console.print(f"  ply: {result.ply_path}")
+    if result.preview_path:
+        console.print(f"  preview: {result.preview_path}")
+
+
 @app.command("install-brush")
 def install_brush_cmd(
     force: bool = typer.Option(False, "--force", help="Reinstall even if brush is on PATH"),

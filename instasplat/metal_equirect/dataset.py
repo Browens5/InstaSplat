@@ -11,6 +11,7 @@ import numpy as np
 import torch
 
 from instasplat.metal_equirect.cameras import yaw_pitch_to_rotmat
+from instasplat.metal_equirect.colmap_bin import ensure_images_txt
 from instasplat.stages.sfm import FACE_NAMES, FACE_YAW_PITCH
 from instasplat.utils.paths import JobPaths
 from instasplat.utils.scale import qvec_to_rotmat, read_images_txt, read_points3d_txt
@@ -130,15 +131,20 @@ def load_equirect_dataset(
 
     images_txt = model_dir / "images.txt"
     if not images_txt.exists():
-        # binary-only: convert hint — try sibling 0_txt
-        for cand in (model_dir.parent / "0_txt", model_dir / "0_txt"):
-            if (cand / "images.txt").exists():
-                images_txt = cand / "images.txt"
-                model_dir = cand
-                break
+        # binary-only: convert from images.bin, or try sibling 0_txt
+        converted = ensure_images_txt(model_dir)
+        if converted is not None:
+            images_txt = converted
+        else:
+            for cand in (model_dir.parent / "0_txt", model_dir / "0_txt"):
+                if (cand / "images.txt").exists():
+                    images_txt = cand / "images.txt"
+                    model_dir = cand
+                    break
     if not images_txt.exists():
         raise FileNotFoundError(
-            f"Need images.txt in {model_dir} (run model_converter or use text model)"
+            f"Need images.txt or images.bin in {model_dir} "
+            "(run model_converter or use a text/binary COLMAP model)"
         )
 
     colmap_images = read_images_txt(images_txt)

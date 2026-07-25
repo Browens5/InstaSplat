@@ -81,12 +81,27 @@ class GaussianModel(nn.Module):
                 "quats": self.quats.data[idx].clone(),
                 "f_dc": self.f_dc.data[idx].clone(),
             }
-            if self.sh_degree >= 1 and self.f_rest.numel() > 0:
+            if self.sh_degree >= 1 and isinstance(self.f_rest, nn.Parameter) and self.f_rest.numel():
                 extras["f_rest"] = self.f_rest.data[idx].clone()
             for name, extra in extras.items():
                 param = getattr(self, name)
                 merged = torch.cat([param.data, extra], dim=0)
                 setattr(self, name, nn.Parameter(merged))
+
+    def set_active_sh_degree(self, degree: int) -> None:
+        """Enable higher SH bands mid-training (allocates f_rest if needed)."""
+        degree = max(0, min(int(degree), 1))
+        if degree <= self.sh_degree:
+            self.sh_degree = degree
+            return
+        with torch.no_grad():
+            if degree >= 1 and (
+                not isinstance(self.f_rest, nn.Parameter) or self.f_rest.numel() == 0
+            ):
+                self.f_rest = nn.Parameter(
+                    torch.zeros(self.n, 9, device=self.means.device, dtype=self.means.dtype)
+                )
+        self.sh_degree = degree
 
 
 def gaussians_from_points(

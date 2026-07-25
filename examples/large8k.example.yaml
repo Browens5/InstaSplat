@@ -1,0 +1,66 @@
+# Example large 8K@30 tiled job
+input_path: /path/to/capture_equirect_8k.mp4
+output_dir: ./runs
+project_name: walk_8k
+mode: tiled
+
+chunk:
+  enabled: true
+  duration_sec: 25.0
+  overlap_sec: 5.0
+  base_fps: 6.0
+  max_fps: 15.0
+  source_fps_hint: 30.0
+  max_frames_per_chunk: 180
+  target_path_length_m: 40.0
+  max_parallel_chunks: 1
+  merge_prune_opacity: 0.05
+
+metal:
+  prefer_metal: true
+  serialize_brush: true
+
+mask:
+  enabled: true
+  model: yolov8m-seg.pt
+  device: mps
+
+sfm:
+  mode: perspective_cubemap
+  face_resolution: 1280
+  matcher: sequential
+  quality: high
+
+scale:
+  mode: gps
+
+train:
+  backend: brush
+  total_steps: 20000
+  max_resolution: 1600
+  brush_bin: brush
+  opensplat_bin: opensplat
+
+export:
+  formats: [ply, sog, spz]
+  filter_nan: true
+  min_opacity: 0.05
+  streamed_lod: true
+
+refine:
+  enabled: true
+  pose_blend: 0.25
+  max_align_rmse_m: 8.0
+
+package:
+  nerfstudio: true
+  hierarchy_manifest: true
+  cpu_lod: true
+  cloud_manifest: true
+  quality_report: true
+
+preflight: true
+allow_unstitched: false
+allow_partial_merge: false
+
+stages: [ingest, plan_chunks, preflight, process_chunks, align_chunks, merge_chunks, package]

@@ -1,0 +1,44 @@
+# Example InstaSplat pipeline config
+input_path: /path/to/VID_20250101_120000_00_001.insv
+output_dir: ./runs
+project_name: example_capture
+
+extract:
+  fps: 2.0
+  stitch_mode: studio_mp4
+  image_format: jpg
+  jpeg_quality: 95
+
+mask:
+  enabled: true
+  model: yolov8m-seg.pt
+  conf: 0.35
+  device: mps
+  dilate_px: 4
+
+sfm:
+  mode: perspective_cubemap
+  face_resolution: 1024
+  cubemap_faces: 6
+  matcher: sequential
+  sequential_overlap: 15
+  quality: high
+  use_gpu: false
+
+scale:
+  mode: none
+  stereo_baseline_m: 0.065
+
+train:
+  total_steps: 30000
+  max_resolution: 1600
+  with_viewer: false
+  brush_bin: brush
+
+export:
+  formats: [ply, sog]
+  filter_nan: true
+  splat_transform_bin: splat-transform
+
+stages: [ingest, extract, mask, sfm, scale, train, export]
+skip_existing: true

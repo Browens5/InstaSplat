@@ -28,11 +28,13 @@ instasplat install-brush
 brew install ffmpeg exiftool colmap git
 npm install -g @playcanvas/splat-transform
 
-# Brush (auto)
+# Brush (auto) — Apple Silicon downloads the GitHub release binary (fast).
+# Homebrew `cargo` is often too old (Brush needs Rust 1.88+ / edition 2024).
 instasplat install-brush
+# Force source build with rustup:
+#   instasplat install-brush --from-source
 # or: ./scripts/install_brush.sh
-# clones to ~/.cache/instasplat/brush, cargo build --release,
-# symlinks to ~/.local/bin/brush and ~/.cargo/bin/brush
+# Binary lands at ~/.local/bin/brush (and ~/.cargo/bin/brush when present)
 ```
 
 ## Insta360 Studio export checklist

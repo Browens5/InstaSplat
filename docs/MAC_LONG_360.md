@@ -23,7 +23,7 @@ Studio equirect MP4 (+ sibling INSV / gyro+gps CSV)
 # 2) Keep the original .insv next to it (telemetry), or add gyro.csv / gps.csv
 
 instasplat doctor          # confirm mac_long_360=yes
-instasplat install-brush   # once — clones + cargo build --release
+instasplat install-brush   # once — downloads Apple Silicon binary (or cargo build)
 instasplat mac-360 -i ./capture_equirect_8k.mp4 -o ./runs -n walk_360
 # GUI: Pause freezes stages + SIGSTOPs Brush; Unpause / Stop also available
 

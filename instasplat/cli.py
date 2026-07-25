@@ -7,12 +7,20 @@ from pathlib import Path
 import typer
 from rich.console import Console
 from rich.progress import Progress
+from rich.table import Table
 
 from instasplat import __version__
 from instasplat.config import DEFAULT_CONFIG_TEMPLATE, LARGE_8K_CONFIG_TEMPLATE, PipelineConfig
 from instasplat.pipeline import Pipeline
 from instasplat.utils.deps import print_report
 from instasplat.utils.metal import metal_report
+from instasplat.utils.stages import (
+    ALL_STAGES,
+    SINGLE_STAGES,
+    STAGE_HELP,
+    TILED_STAGES,
+    select_stages,
+)
 
 app = typer.Typer(
     name="instasplat",
@@ -87,6 +95,80 @@ def init_config(
     console.print(f"Wrote {out}")
 
 
+@app.command("stages")
+def stages_cmd(
+    mode: str = typer.Option(
+        "all",
+        "--mode",
+        help="Which catalog: all | single | tiled",
+    ),
+) -> None:
+    """List pipeline sections you can run individually."""
+    if mode not in {"all", "single", "tiled"}:
+        raise typer.BadParameter("mode must be all, single, or tiled")
+    names = {"all": ALL_STAGES, "single": SINGLE_STAGES, "tiled": TILED_STAGES}[mode]
+    table = Table(title=f"InstaSplat stages ({mode})")
+    table.add_column("Stage")
+    table.add_column("Description")
+    for name in names:
+        table.add_row(name, STAGE_HELP.get(name, ""))
+    console.print(table)
+    console.print(
+        "\nExamples:\n"
+        "  instasplat stage mask -j ./runs/walk_360\n"
+        "  instasplat run --job ./runs/walk_360 --only process_chunks\n"
+        "  instasplat run -i ./cap.mp4 --from sfm --to export\n"
+        "  instasplat run --large-8k -i ./cap.mp4 --only plan_chunks,preflight"
+    )
+
+
+@app.command("stage")
+def stage_cmd(
+    stage_name: str = typer.Argument(..., help="Stage to run (see `instasplat stages`)"),
+    job: Path | None = typer.Option(
+        None, "--job", "-j", help="Existing job directory (loads config.yaml)"
+    ),
+    input_path: Path | None = typer.Option(None, "--input", "-i"),
+    output_dir: Path = typer.Option(DEFAULT_OUT, "--output", "-o"),
+    project_name: str = typer.Option("instasplat_job", "--name", "-n"),
+    config: Path | None = typer.Option(None, "--config", "-c"),
+    large_8k: bool = typer.Option(False, "--large-8k", "--tiled"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    """Run a single pipeline section (on a new or existing job)."""
+    if stage_name not in ALL_STAGES:
+        raise typer.BadParameter(
+            f"Unknown stage '{stage_name}'. Run `instasplat stages` for the list."
+        )
+    console.print(f"[bold cyan]Running stage[/bold cyan] {stage_name}")
+    cfg = _build_run_config(
+        input_path=input_path,
+        output_dir=output_dir,
+        project_name=project_name,
+        config=config,
+        job=job,
+        stages=None,
+        only=stage_name,
+        from_stage=None,
+        to_stage=None,
+        fps=None,
+        no_mask=False,
+        export_formats=None,
+        dry_run=dry_run,
+        with_viewer=False,
+        large_8k=large_8k,
+        trainer=None,
+        no_refine=False,
+        streamed_lod=False,
+        no_cloud_manifest=False,
+        no_quality=False,
+        no_preflight=False,
+        allow_unstitched=False,
+        allow_partial_merge=False,
+    )
+    _execute_pipeline(cfg)
+
+
 @app.command("run")
 def run(
     input_path: Path | None = typer.Option(
@@ -95,10 +177,27 @@ def run(
     output_dir: Path = typer.Option(DEFAULT_OUT, "--output", "-o"),
     project_name: str = typer.Option("instasplat_job", "--name", "-n"),
     config: Path | None = typer.Option(None, "--config", "-c"),
+    job: Path | None = typer.Option(
+        None,
+        "--job",
+        "-j",
+        help="Existing job dir — resume / run selected stages using its config.yaml",
+    ),
     stages: str | None = typer.Option(
         None,
         "--stages",
-        help="Comma-separated stages",
+        help="Comma-separated stages (alias of --only)",
+    ),
+    only: str | None = typer.Option(
+        None,
+        "--only",
+        help="Run only these stages, e.g. mask or plan_chunks,process_chunks",
+    ),
+    from_stage: str | None = typer.Option(
+        None, "--from", help="Start at this stage (inclusive)"
+    ),
+    to_stage: str | None = typer.Option(
+        None, "--to", help="Stop after this stage (inclusive)"
     ),
     fps: float | None = typer.Option(None, help="Override extract FPS (single mode)"),
     no_mask: bool = typer.Option(False, help="Disable YOLO people masking"),
@@ -134,13 +233,17 @@ def run(
         False, "--allow-partial-merge", help="Merge even if some tiles failed"
     ),
 ) -> None:
-    """Run the reconstruction pipeline."""
+    """Run the full pipeline, or selected sections with --only / --from / --to."""
     cfg = _build_run_config(
         input_path=input_path,
         output_dir=output_dir,
         project_name=project_name,
         config=config,
+        job=job,
         stages=stages,
+        only=only,
+        from_stage=from_stage,
+        to_stage=to_stage,
         fps=fps,
         no_mask=no_mask,
         export_formats=export_formats,
@@ -189,7 +292,11 @@ def mac_360(
         output_dir=output_dir,
         project_name=project_name,
         config=None,
+        job=None,
         stages=None,
+        only=None,
+        from_stage=None,
+        to_stage=None,
         fps=None,
         no_mask=no_mask,
         export_formats=formats,
@@ -208,13 +315,32 @@ def mac_360(
     _execute_pipeline(cfg)
 
 
+def _load_job_config(job: Path) -> PipelineConfig:
+    """Load an existing job's config.yaml (or synthesize a minimal one)."""
+    job = job.resolve()
+    cfg_path = job / "config.yaml"
+    if cfg_path.exists():
+        cfg = PipelineConfig.load(cfg_path)
+        cfg.output_dir = job.parent
+        cfg.project_name = job.name
+        return cfg
+    # Fallback: point at job video if present
+    video = job / "00_ingest" / "equirect.mp4"
+    inp = video if video.exists() else job
+    return PipelineConfig(input_path=inp, output_dir=job.parent, project_name=job.name)
+
+
 def _build_run_config(
     *,
     input_path: Path | None,
     output_dir: Path,
     project_name: str,
     config: Path | None,
+    job: Path | None,
     stages: str | None,
+    only: str | None,
+    from_stage: str | None,
+    to_stage: str | None,
     fps: float | None,
     no_mask: bool,
     export_formats: str | None,
@@ -230,7 +356,11 @@ def _build_run_config(
     allow_unstitched: bool,
     allow_partial_merge: bool,
 ) -> PipelineConfig:
-    if config is not None:
+    if job is not None:
+        cfg = _load_job_config(job)
+        if input_path is not None:
+            cfg.input_path = input_path
+    elif config is not None:
         cfg = PipelineConfig.load(config)
         if input_path is not None:
             cfg.input_path = input_path
@@ -238,15 +368,19 @@ def _build_run_config(
         cfg.project_name = project_name
     else:
         if input_path is None:
-            raise typer.BadParameter("Provide --input or --config")
+            raise typer.BadParameter("Provide --input, --config, or --job")
         cfg = PipelineConfig(
             input_path=input_path,
             output_dir=output_dir,
             project_name=project_name,
         )
 
-    if large_8k:
+    # Applying large-8k defaults resets stages — do it before stage selection
+    if large_8k and job is None:
         cfg.enable_mac_long_360_defaults()
+    elif large_8k and job is not None and cfg.mode != "tiled":
+        cfg.enable_mac_long_360_defaults()
+
     if trainer:
         if trainer not in {"brush", "opensplat"}:
             raise typer.BadParameter("trainer must be 'brush' or 'opensplat'")
@@ -265,8 +399,22 @@ def _build_run_config(
         cfg.allow_unstitched = True
     if allow_partial_merge:
         cfg.allow_partial_merge = True
-    if stages:
-        cfg.stages = [s.strip() for s in stages.split(",") if s.strip()]
+
+    mode = "tiled" if (cfg.mode == "tiled" or cfg.chunk.enabled or large_8k) else "single"
+    try:
+        selected = select_stages(
+            mode=mode,  # type: ignore[arg-type]
+            only=only,
+            from_stage=from_stage,
+            to_stage=to_stage,
+            stages=stages,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if selected is not None:
+        cfg.stages = selected
+        console.print(f"[cyan]Stages:[/cyan] {', '.join(selected)}")
+
     if fps is not None:
         cfg.extract.fps = fps
         cfg.chunk.base_fps = fps

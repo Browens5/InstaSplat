@@ -18,7 +18,13 @@ instasplat mac-360 -i /path/to/capture_equirect_8k.mp4 -o ./runs -n beach_walk
 # Short clip (single scene)
 instasplat run -i /path/to/capture_equirect.mp4 -o ./runs -n beach_walk --formats ply,sog
 
-# Desktop UI
+# Run sections individually (list / one stage / range / resume job)
+instasplat stages
+instasplat stage mask -j ./runs/beach_walk
+instasplat run --job ./runs/beach_walk --only process_chunks
+instasplat run -i ./cap.mp4 --from sfm --to export
+
+# Desktop UI (multi-select stages)
 instasplat gui
 ```
 

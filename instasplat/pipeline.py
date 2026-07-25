@@ -160,13 +160,17 @@ class Pipeline:
         self.cfg.save(self.paths.config)
 
         if stages is None:
-            if self.cfg.mode == "tiled" or self.cfg.chunk.enabled:
-                wanted = self.cfg.stages or list(self.TILED_ORDER)
-                selected = [s for s in self.TILED_ORDER if s in wanted]
+            wanted = list(self.cfg.stages) if self.cfg.stages else None
+            if wanted:
+                # Explicit stage list (from --only / stage / --from--to): honor order
+                # even if a single-mode stage is requested on a tiled job.
+                selected = [s for s in self.STAGE_ORDER if s in wanted]
                 if not selected:
-                    selected = list(self.TILED_ORDER)
+                    selected = wanted
+            elif self.cfg.mode == "tiled" or self.cfg.chunk.enabled:
+                selected = list(self.TILED_ORDER)
             else:
-                single = [
+                selected = [
                     "ingest",
                     "extract",
                     "mask",
@@ -177,10 +181,10 @@ class Pipeline:
                     "export",
                     "package",
                 ]
-                wanted = self.cfg.stages or single
-                selected = [s for s in single if s in wanted]
         else:
             selected = [s for s in self.STAGE_ORDER if s in stages]
+            if not selected:
+                selected = list(stages)
 
         result = PipelineResult(success=False, paths=self.paths)
         self._tracker = StageProgressTracker(stages=selected)

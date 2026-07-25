@@ -35,6 +35,7 @@ from instasplat.pipeline import Pipeline
 from instasplat.utils.control import RunController
 from instasplat.utils.deps import report_dict
 from instasplat.utils.progress import ProgressEvent, format_duration
+from instasplat.utils.stages import ALL_STAGES, SINGLE_STAGES, STAGE_HELP, TILED_STAGES
 
 
 STYLE = """
@@ -266,6 +267,27 @@ class MainWindow(QMainWindow):
                 item.setSelected(True)
         self.formats.setMaximumHeight(110)
         opts_form.addRow("Exports", self.formats)
+
+        self.stage_list = QListWidget()
+        self.stage_list.setSelectionMode(QListWidget.MultiSelection)
+        self.stage_list.setMaximumHeight(160)
+        for name in ALL_STAGES:
+            item = QListWidgetItem(f"{name} — {STAGE_HELP.get(name, '')}")
+            item.setData(256, name)  # Qt.UserRole
+            self.stage_list.addItem(item)
+        opts_form.addRow("Stages (multi-select)", self.stage_list)
+        stage_btns = QHBoxLayout()
+        sel_all = QPushButton("All for mode")
+        sel_all.setObjectName("secondary")
+        sel_all.clicked.connect(self._select_mode_stages)
+        sel_one = QPushButton("Clear")
+        sel_one.setObjectName("secondary")
+        sel_one.clicked.connect(self.stage_list.clearSelection)
+        stage_btns.addWidget(sel_all)
+        stage_btns.addWidget(sel_one)
+        opts_form.addRow(stage_btns)
+        self.large_8k_cb.toggled.connect(lambda _=False: self._select_mode_stages())
+        self._select_mode_stages()
         layout.addWidget(opts)
 
         status_box = QGroupBox("Run status")
@@ -371,6 +393,24 @@ class MainWindow(QMainWindow):
         finally:
             self.install_brush_btn.setEnabled(True)
 
+    def _select_mode_stages(self) -> None:
+        wanted = set(TILED_STAGES if self.large_8k_cb.isChecked() else SINGLE_STAGES)
+        for i in range(self.stage_list.count()):
+            item = self.stage_list.item(i)
+            name = item.data(256)
+            item.setSelected(name in wanted)
+
+    def _selected_stages(self) -> list[str]:
+        names = []
+        for item in self.stage_list.selectedItems():
+            name = item.data(256)
+            if name:
+                names.append(str(name))
+        # Preserve catalog order
+        order = {s: i for i, s in enumerate(ALL_STAGES)}
+        names.sort(key=lambda n: order.get(n, 999))
+        return names
+
     def _build_config(self) -> PipelineConfig:
         inp = Path(self.input_edit.text().strip())
         if not inp:
@@ -378,6 +418,9 @@ class MainWindow(QMainWindow):
         formats = [i.text() for i in self.formats.selectedItems()]
         if not formats:
             formats = ["ply", "sog"]
+        stages = self._selected_stages()
+        if not stages:
+            raise ValueError("Select at least one pipeline stage")
         cfg = PipelineConfig(
             input_path=inp,
             output_dir=Path(self.output_edit.text().strip() or "./runs"),
@@ -388,6 +431,8 @@ class MainWindow(QMainWindow):
             cfg.chunk.base_fps = float(self.fps.value())
         else:
             cfg.extract.fps = float(self.fps.value())
+        # Apply after defaults so user stage selection wins
+        cfg.stages = stages
         cfg.mask.enabled = self.mask_cb.isChecked()
         cfg.train.backend = self.trainer.currentText()  # type: ignore[assignment]
         cfg.refine.enabled = self.refine_cb.isChecked()
@@ -415,6 +460,7 @@ class MainWindow(QMainWindow):
         self.stop_btn.setEnabled(True)
         self.status_label.setText("Starting…")
         self.log.append(f"Starting job → {cfg.work_dir()}")
+        self.log.append(f"Stages: {', '.join(cfg.stages)}")
         self.thread = QThread()
         self.worker = Worker(cfg, self.controller)
         self.worker.moveToThread(self.thread)

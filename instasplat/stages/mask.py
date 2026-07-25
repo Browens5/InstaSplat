@@ -87,19 +87,33 @@ def _apply_masks_to_keep(
     return keep
 
 
+def _predict_kwargs(cfg: PipelineConfig, device: str) -> dict:
+    """Build YOLO predict kwargs (FP32; avoid deprecated ``half``)."""
+    kwargs: dict = {
+        "conf": cfg.mask.conf,
+        "iou": cfg.mask.iou,
+        "classes": cfg.mask.classes,
+        "device": device,
+        "verbose": False,
+        # retina_masks=True triggers extra MPS native ops that crash intermittently
+        "retina_masks": bool(cfg.mask.retina_masks),
+        # Ultralytics replaced half=False with quantize=32 / "fp32"
+        "quantize": 32,
+    }
+    return kwargs
+
+
 def _predict_frame(model, img: np.ndarray, cfg: PipelineConfig, device: str):
     """Run YOLO predict with MPS-safe defaults."""
-    return model.predict(
-        source=img,
-        conf=cfg.mask.conf,
-        iou=cfg.mask.iou,
-        classes=cfg.mask.classes,
-        device=device,
-        verbose=False,
-        # retina_masks=True triggers extra MPS native ops that crash intermittently
-        retina_masks=bool(cfg.mask.retina_masks),
-        half=False,
-    )
+    kwargs = _predict_kwargs(cfg, device)
+    try:
+        return model.predict(source=img, **kwargs)
+    except TypeError as exc:
+        # Older Ultralytics: no quantize arg — drop it (default is FP32)
+        if "quantize" in str(exc).lower() or "unexpected keyword" in str(exc).lower():
+            kwargs.pop("quantize", None)
+            return model.predict(source=img, **kwargs)
+        raise
 
 
 def run_mask(cfg: PipelineConfig, paths: JobPaths) -> MaskResult:

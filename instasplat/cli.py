@@ -104,6 +104,11 @@ def run(
         help="Enable tiled 8K@30 mode: auto-chunk, gyro/GPS align, Metal-first",
     ),
     tiled: bool = typer.Option(False, "--tiled", help="Alias for enabling chunk.mode=tiled"),
+    trainer: str | None = typer.Option(
+        None,
+        "--trainer",
+        help="Training backend: brush (default) or opensplat (Metal MPS)",
+    ),
 ) -> None:
     """Run the reconstruction pipeline."""
     if config is not None:
@@ -123,6 +128,10 @@ def run(
 
     if large_8k or tiled:
         cfg.enable_large_8k_defaults()
+    if trainer:
+        if trainer not in {"brush", "opensplat"}:
+            raise typer.BadParameter("trainer must be 'brush' or 'opensplat'")
+        cfg.train.backend = trainer  # type: ignore[assignment]
     if stages:
         cfg.stages = [s.strip() for s in stages.split(",") if s.strip()]
     if fps is not None:

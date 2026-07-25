@@ -59,6 +59,10 @@ class ChunkConfig:
     # Soft target path length per chunk when GPS exists (meters)
     target_path_length_m: float | None = 40.0
     max_parallel_chunks: int = 1
+    # LongSplat-style prune of low-opacity Gaussians before/after merge (0–1)
+    merge_prune_opacity: float = 0.05
+    # Require this fraction of temporal overlap vs duration (warn if lower)
+    min_overlap_ratio: float = 0.15
 
 
 @dataclass
@@ -117,16 +121,21 @@ class ScaleConfig:
     gps_csv: Path | None = None
 
 
+TrainerBackend = Literal["brush", "opensplat"]
+
+
 @dataclass
 class TrainConfig:
-    """Brush Gaussian splat training settings."""
+    """Gaussian splat training settings (Metal-capable backends)."""
 
+    # brush = ArthurBrussee/brush (WebGPU/Metal); opensplat = pierotofy/OpenSplat (MPS)
+    backend: TrainerBackend = "brush"
     total_steps: int = 30_000
     max_resolution: int = 1600
     with_viewer: bool = False
     export_every: int = 5_000
-    # Brush binary name or absolute path
     brush_bin: str = "brush"
+    opensplat_bin: str = "opensplat"
     extra_args: list[str] = field(default_factory=list)
 
 
@@ -143,6 +152,10 @@ class ExportConfig:
     # Optional opacity filter: keep opacity > threshold
     min_opacity: float | None = None
     splat_transform_bin: str = "splat-transform"
+    # hierarchical / streaming delivery (splat-transform lod-meta.json)
+    streamed_lod: bool = False
+    # Niantic SPZ uses RUB coords by default — document in export notes
+    spz_coordinate_note: bool = True
 
 
 @dataclass
@@ -197,7 +210,12 @@ class PipelineConfig:
         self.sfm.quality = "high"
         self.train.max_resolution = 1600
         self.train.total_steps = 20_000
-        self.export.formats = ["ply", "sog"]
+        self.train.backend = "brush"
+        # LichtFeld / Niantic delivery set
+        self.export.formats = ["ply", "sog", "spz"]
+        self.export.min_opacity = 0.05
+        self.export.streamed_lod = False
+        self.chunk.merge_prune_opacity = 0.05
         if self.scale.mode == "none":
             self.scale.mode = "gps"
         self.stages = [
@@ -313,14 +331,18 @@ scale:
   stereo_baseline_m: 0.065
 
 train:
+  backend: brush            # brush | opensplat (Metal MPS)
   total_steps: 20000
   max_resolution: 1600
   with_viewer: false
   brush_bin: brush
+  opensplat_bin: opensplat
 
 export:
-  formats: [ply, sog]
+  formats: [ply, sog, spz]
   filter_nan: true
+  min_opacity: 0.05
+  streamed_lod: false
   splat_transform_bin: splat-transform
 
 stages: [ingest, plan_chunks, process_chunks, align_chunks, merge_chunks]
@@ -345,6 +367,7 @@ chunk:
   max_frames_per_chunk: 180
   target_path_length_m: 40.0
   max_parallel_chunks: 1
+  merge_prune_opacity: 0.05
 
 metal:
   prefer_metal: true
@@ -365,13 +388,17 @@ scale:
   mode: gps
 
 train:
+  backend: brush            # or opensplat for C++ Metal MPS
   total_steps: 20000
   max_resolution: 1600
   brush_bin: brush
+  opensplat_bin: opensplat
 
 export:
-  formats: [ply, sog]
+  formats: [ply, sog, spz]
   filter_nan: true
+  min_opacity: 0.05
+  streamed_lod: false
 
 stages: [ingest, plan_chunks, process_chunks, align_chunks, merge_chunks]
 """

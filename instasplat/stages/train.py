@@ -1,4 +1,4 @@
-"""Train a 3D Gaussian splat with Brush."""
+"""Train a 3D Gaussian splat (Brush or OpenSplat Metal backends)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from instasplat.config import PipelineConfig
-from instasplat.utils.deps import check_brush
+from instasplat.utils.deps import check_brush, check_opensplat
 from instasplat.utils.paths import JobPaths
 from instasplat.utils.process import get_logger, run_cmd
 
@@ -16,21 +16,18 @@ from instasplat.utils.process import get_logger, run_cmd
 class TrainResult:
     export_dir: Path
     ply_path: Path | None
-    brush_bin: str
+    trainer_bin: str
+    backend: str
 
 
-def _prepare_brush_dataset(paths: JobPaths, model_dir: Path) -> Path:
-    """
-    Brush expects COLMAP layout: images/ + sparse/0/ (cameras, images, points3D).
-    We assemble that under 05_train/colmap_dataset.
-    """
+def _prepare_colmap_dataset(paths: JobPaths, model_dir: Path) -> Path:
+    """Assemble COLMAP layout for Brush and OpenSplat."""
     ds = paths.train / "colmap_dataset"
     images = ds / "images"
     sparse0 = ds / "sparse" / "0"
     images.mkdir(parents=True, exist_ok=True)
     sparse0.mkdir(parents=True, exist_ok=True)
 
-    # Link/copy images
     src_images = paths.cubemap_images
     for img in list(src_images.glob("*.jpg")) + list(src_images.glob("*.png")):
         dest = images / img.name
@@ -40,23 +37,17 @@ def _prepare_brush_dataset(paths: JobPaths, model_dir: Path) -> Path:
             except OSError:
                 shutil.copy2(img, dest)
 
-    # Optional masks folder (Brush: folder named 'masks')
     if any(paths.cubemap_masks.glob("*.png")):
         masks = ds / "masks"
         masks.mkdir(parents=True, exist_ok=True)
         for m in paths.cubemap_masks.glob("*.png"):
-            # Brush masks should match image stems; our masks are .png vs .jpg images
-            # Create mask names matching image filenames with .png
-            # Also provide stem-matched copies
             dest = masks / m.name
             if not dest.exists():
                 try:
                     dest.symlink_to(m.resolve())
                 except OSError:
                     shutil.copy2(m, dest)
-            # Match .jpg image name with .png mask of same stem — already same stem
 
-    # Copy model files
     for name in (
         "cameras.bin",
         "images.bin",
@@ -77,22 +68,17 @@ def _find_latest_ply(export_dir: Path) -> Path | None:
     return plys[0] if plys else None
 
 
-def run_train(cfg: PipelineConfig, paths: JobPaths, model_dir: Path) -> TrainResult:
-    paths.ensure()
-    log = get_logger("instasplat.train", paths.logs / "train.log")
+def _run_brush(
+    cfg: PipelineConfig,
+    dataset: Path,
+    export_dir: Path,
+    log_dir: Path,
+    log,
+) -> str:
     status = check_brush(cfg.train.brush_bin)
     brush = status.path or cfg.train.brush_bin
     if not status.available and not cfg.dry_run:
         raise RuntimeError(status.notes or "Brush binary not found")
-
-    dataset = _prepare_brush_dataset(paths, model_dir)
-    export_dir = paths.brush_export
-    export_dir.mkdir(parents=True, exist_ok=True)
-
-    existing = _find_latest_ply(export_dir)
-    if existing and cfg.skip_existing:
-        log.info("Skipping train; found existing splat %s", existing)
-        return TrainResult(export_dir, existing, brush)
 
     cmd = [
         brush,
@@ -109,28 +95,69 @@ def run_train(cfg: PipelineConfig, paths: JobPaths, model_dir: Path) -> TrainRes
     if cfg.train.with_viewer:
         cmd.append("--with-viewer")
     cmd.extend(cfg.train.extra_args)
-
-    # Brush CLI flags evolve; try primary then a help-compatible fallback message
     try:
-        run_cmd(cmd, log_file=paths.logs / "brush.log", dry_run=cfg.dry_run)
+        run_cmd(cmd, log_file=log_dir / "brush.log", dry_run=cfg.dry_run)
     except RuntimeError as exc:
         log.warning("Primary Brush invocation failed (%s); trying alternate flags", exc)
-        alt = [
-            brush,
-            "--export-path",
-            str(export_dir),
-            str(dataset),
-        ]
+        alt = [brush, "--export-path", str(export_dir), str(dataset)]
         if cfg.train.with_viewer:
             alt.append("--with-viewer")
         alt.extend(cfg.train.extra_args)
-        run_cmd(alt, log_file=paths.logs / "brush_alt.log", dry_run=cfg.dry_run)
+        run_cmd(alt, log_file=log_dir / "brush_alt.log", dry_run=cfg.dry_run)
+    return brush
+
+
+def _run_opensplat(
+    cfg: PipelineConfig,
+    dataset: Path,
+    export_dir: Path,
+    log_dir: Path,
+    log,
+) -> str:
+    """OpenSplat C++ trainer with Metal MPS (https://github.com/pierotofy/OpenSplat)."""
+    status = check_opensplat(cfg.train.opensplat_bin)
+    binary = status.path or cfg.train.opensplat_bin
+    if not status.available and not cfg.dry_run:
+        raise RuntimeError(status.notes or "OpenSplat binary not found")
+
+    out_ply = export_dir / "splat.ply"
+    cmd = [
+        binary,
+        str(dataset),
+        "-n",
+        str(cfg.train.total_steps),
+        "-o",
+        str(out_ply),
+    ]
+    cmd.extend(cfg.train.extra_args)
+    run_cmd(cmd, log_file=log_dir / "opensplat.log", dry_run=cfg.dry_run)
+    log.info("OpenSplat training finished → %s", out_ply)
+    return binary
+
+
+def run_train(cfg: PipelineConfig, paths: JobPaths, model_dir: Path) -> TrainResult:
+    paths.ensure()
+    log = get_logger("instasplat.train", paths.logs / "train.log")
+    backend = cfg.train.backend
+    dataset = _prepare_colmap_dataset(paths, model_dir)
+    export_dir = paths.brush_export
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    existing = _find_latest_ply(export_dir)
+    if existing and cfg.skip_existing:
+        log.info("Skipping train; found existing splat %s", existing)
+        return TrainResult(export_dir, existing, cfg.train.brush_bin, backend)
+
+    if backend == "opensplat":
+        trainer = _run_opensplat(cfg, dataset, export_dir, paths.logs, log)
+    else:
+        trainer = _run_brush(cfg, dataset, export_dir, paths.logs, log)
 
     ply = None if cfg.dry_run else _find_latest_ply(export_dir)
     if ply is None and not cfg.dry_run:
         log.warning(
-            "No .ply found in %s after Brush run. Open the viewer and export manually, "
-            "or adjust train.extra_args to match your Brush version CLI.",
+            "No .ply found in %s after %s run. Adjust train.extra_args for your binary.",
             export_dir,
+            backend,
         )
-    return TrainResult(export_dir, ply, brush)
+    return TrainResult(export_dir, ply, trainer, backend)

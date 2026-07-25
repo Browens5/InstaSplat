@@ -43,6 +43,9 @@ Auto-chunks the capture, densifies frames on turns using gyro, reconstructs each
 tile on Metal, aligns tiles with GPS/gyro Sim3, and merges into one large splat.
 See **[docs/LARGE_8K.md](docs/LARGE_8K.md)**.
 
+Trainer backends: `--trainer brush` (default) or `--trainer opensplat` (C++ Metal MPS).
+Exports for large jobs default to `.ply`, `.sog`, and `.spz`.
+
 ## macOS stitching reality check
 
 Official **Insta360 MediaSDK** targets **Windows / Ubuntu**, not macOS. For production quality on a Mac:
@@ -64,7 +67,9 @@ COLMAP units are arbitrary unless you set `scale.mode`:
 
 ## Feasibility & cloud
 
-See **[docs/FEASIBILITY.md](docs/FEASIBILITY.md)** and **[docs/CLOUD.md](docs/CLOUD.md)**. Short version: the full stack is workable on Apple Silicon for short clips; long 8K captures and large COLMAP jobs are better hybrid (local prep + cloud SfM/train).
+See **[docs/FEASIBILITY.md](docs/FEASIBILITY.md)**, **[docs/CLOUD.md](docs/CLOUD.md)**,
+**[docs/LARGE_8K.md](docs/LARGE_8K.md)**, **[docs/CAPTURE_GUIDELINES.md](docs/CAPTURE_GUIDELINES.md)**,
+and **[docs/RESEARCH_STRATEGIES.md](docs/RESEARCH_STRATEGIES.md)** (LongSplat, OpenSplat, hierarchical-3DGS, 3DGUT, …).
 
 ## Config
 

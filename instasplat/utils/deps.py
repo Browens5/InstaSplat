@@ -112,6 +112,28 @@ def check_brush(bin_name: str = "brush") -> DepStatus:
     )
 
 
+def check_opensplat(bin_name: str = "opensplat") -> DepStatus:
+    path = _which(bin_name)
+    if not path:
+        return DepStatus(
+            "opensplat",
+            False,
+            notes=(
+                "Build from https://github.com/pierotofy/OpenSplat with "
+                "-DGPU_RUNTIME=MPS for Apple Silicon Metal training (AGPL)."
+            ),
+            required_for=["train"],
+        )
+    code, out, err = _run([path, "--help"])
+    return DepStatus(
+        "opensplat",
+        code == 0 or "opensplat" in (out + err).lower() or "splat" in (out + err).lower(),
+        path,
+        notes="Metal MPS trainer alternative to Brush",
+        required_for=["train"],
+    )
+
+
 def check_splat_transform(bin_name: str = "splat-transform") -> DepStatus:
     path = _which(bin_name)
     if not path:
@@ -202,6 +224,7 @@ def check_all(
         check_exiftool(),
         check_colmap(),
         check_brush(brush_bin),
+        check_opensplat(),
         check_splat_transform(splat_transform_bin),
         check_mediasdk(),
         *check_python_ml(),
@@ -229,7 +252,8 @@ def _ready_stages(deps: list[DepStatus]) -> dict[str, bool]:
         "extract": by_name.get("ffmpeg", DepStatus("ffmpeg", False)).available,
         "mask": by_name.get("ultralytics", DepStatus("ultralytics", False)).available,
         "sfm": by_name.get("colmap", DepStatus("colmap", False)).available,
-        "train": by_name.get("brush", DepStatus("brush", False)).available,
+        "train": by_name.get("brush", DepStatus("brush", False)).available
+        or by_name.get("opensplat", DepStatus("opensplat", False)).available,
         "export": by_name.get("splat-transform", DepStatus("splat-transform", False)).available,
         "official_stitch": by_name.get("MediaSDKTest", DepStatus("MediaSDKTest", False)).available,
     }

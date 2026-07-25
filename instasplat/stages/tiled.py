@@ -448,6 +448,17 @@ def run_merge_chunks(
         log.info("Dry-run merge of %d chunks", len(manifest.chunks))
         return outputs
 
+    # Warn if overlap is thin (on-the-fly-nvs / LongSplat capture guidance)
+    if cfg.chunk.duration_sec > 0:
+        ratio = cfg.chunk.overlap_sec / cfg.chunk.duration_sec
+        if ratio < cfg.chunk.min_overlap_ratio:
+            log.warning(
+                "chunk.overlap_sec/duration_sec=%.2f < min_overlap_ratio=%.2f — "
+                "tile seams may be hard to align",
+                ratio,
+                cfg.chunk.min_overlap_ratio,
+            )
+
     transformed: list[Path] = []
 
     st_bin = cfg.export.splat_transform_bin
@@ -477,8 +488,12 @@ def run_merge_chunks(
 
     merged_ply = merge_dir / "scene_merged.ply"
     merge_cmd = [st_bin, *[str(p) for p in transformed]]
+    # LongSplat-style prune: drop near-transparent Gaussians during merge
+    prune = cfg.export.min_opacity or cfg.chunk.merge_prune_opacity
     if cfg.export.filter_nan:
         merge_cmd.append("-N")
+    if prune and prune > 0:
+        merge_cmd.extend(["-c", f"opacity,gt,{prune}"])
     merge_cmd.append(str(merged_ply))
     run_cmd(merge_cmd, log_file=paths.logs / "merge_all.log", dry_run=False, check=False)
 
@@ -495,9 +510,30 @@ def run_merge_chunks(
             if fmt == "compressed.ply"
             else paths.export / f"scene.{fmt}"
         )
-        cmd = [st_bin, str(canonical), "-N", str(dest)] if cfg.export.filter_nan else [st_bin, str(canonical), str(dest)]
+        cmd = [st_bin, str(canonical)]
+        if cfg.export.filter_nan:
+            cmd.append("-N")
+        if prune and prune > 0:
+            cmd.extend(["-c", f"opacity,gt,{prune}"])
+        cmd.append(str(dest))
         run_cmd(cmd, log_file=paths.logs / f"export_merged_{fmt}.log", dry_run=False, check=False)
         outputs[fmt] = dest
+
+    if cfg.export.streamed_lod:
+        lod_dest = paths.export / "lod-meta.json"
+        cmd = [st_bin, str(canonical)]
+        if cfg.export.filter_nan:
+            cmd.append("-N")
+        cmd.append(str(lod_dest))
+        run_cmd(cmd, log_file=paths.logs / "export_merged_lod.log", dry_run=False, check=False)
+        outputs["lod-meta.json"] = lod_dest
+
+    if "spz" in outputs and cfg.export.spz_coordinate_note:
+        (paths.export / "SPZ_COORDINATES.txt").write_text(
+            "Niantic SPZ defaults to RUB (OpenGL/three.js). "
+            "See docs/RESEARCH_STRATEGIES.md and nianticlabs/spz.\n",
+            encoding="utf-8",
+        )
 
     (merge_dir / "merged_manifest.json").write_text(
         json.dumps({k: str(v) for k, v in outputs.items()}, indent=2),

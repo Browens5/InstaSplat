@@ -88,6 +88,27 @@ def run_export(cfg: PipelineConfig, paths: JobPaths, ply_path: Path | None) -> E
         outputs[fmt] = dest
         log.info("Wrote %s", dest)
 
+    # Hierarchical / streamed LOD (inspired by hierarchical-3d-gaussians + splat-transform)
+    if cfg.export.streamed_lod:
+        lod_dest = out_dir / "lod-meta.json"
+        cmd = [st_bin, str(canonical), *_build_transform_args(cfg), str(lod_dest)]
+        run_cmd(
+            cmd,
+            log_file=paths.logs / "splat_transform_lod.log",
+            dry_run=cfg.dry_run,
+            check=False,
+        )
+        outputs["lod-meta.json"] = lod_dest
+        log.info("Wrote streamed LOD bundle → %s", lod_dest)
+
+    if "spz" in outputs and cfg.export.spz_coordinate_note:
+        (out_dir / "SPZ_COORDINATES.txt").write_text(
+            "Niantic SPZ defaults to RUB (OpenGL/three.js). "
+            "If viewers look rotated vs COLMAP/PLY (often RDF), convert axes in "
+            "splat-transform or the SPZ pack/unpack options. See nianticlabs/spz.\n",
+            encoding="utf-8",
+        )
+
     # Manifest
     manifest = out_dir / "exports.txt"
     manifest.write_text(

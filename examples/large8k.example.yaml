@@ -14,6 +14,7 @@ chunk:
   max_frames_per_chunk: 180
   target_path_length_m: 40.0
   max_parallel_chunks: 1
+  merge_prune_opacity: 0.05
 
 metal:
   prefer_metal: true
@@ -34,12 +35,16 @@ scale:
   mode: gps
 
 train:
+  backend: brush
   total_steps: 20000
   max_resolution: 1600
   brush_bin: brush
+  opensplat_bin: opensplat
 
 export:
-  formats: [ply, sog]
+  formats: [ply, sog, spz]
   filter_nan: true
+  min_opacity: 0.05
+  streamed_lod: false
 
 stages: [ingest, plan_chunks, process_chunks, align_chunks, merge_chunks]

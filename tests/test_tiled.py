@@ -103,10 +103,26 @@ def test_large_8k_defaults_and_dry_run(tmp_path: Path) -> None:
     assert cfg.mode == "tiled"
     assert cfg.chunk.enabled
     assert "plan_chunks" in cfg.stages
+    assert "spz" in cfg.export.formats
+    assert cfg.export.min_opacity == 0.05
     result = Pipeline(cfg).run()
     assert result.success
     manifest = tmp_path / "runs" / "big" / "10_chunks" / "manifest.json"
     assert manifest.exists()
+
+
+def test_trainer_backend_roundtrip(tmp_path: Path) -> None:
+    cfg = PipelineConfig(
+        input_path=tmp_path / "a.mp4",
+        output_dir=tmp_path / "out",
+        project_name="x",
+    )
+    cfg.train.backend = "opensplat"
+    path = tmp_path / "c.yaml"
+    cfg.save(path)
+    loaded = PipelineConfig.load(path)
+    assert loaded.train.backend == "opensplat"
+    assert loaded.train.opensplat_bin == "opensplat"
 
 
 def test_init_large_config_roundtrip(tmp_path: Path) -> None:
@@ -122,3 +138,4 @@ def test_init_large_config_roundtrip(tmp_path: Path) -> None:
     assert loaded.mode == "tiled"
     assert loaded.chunk.max_fps == 15.0
     assert loaded.metal.prefer_metal is True
+    assert "spz" in loaded.export.formats

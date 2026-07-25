@@ -38,7 +38,12 @@ from instasplat.utils.metal import detect_metal
 from instasplat.utils.nerfstudio import PackageResult, run_package
 from instasplat.utils.paths import JobPaths
 from instasplat.utils.process import get_logger
-from instasplat.utils.progress import ProgressEvent, StageProgressTracker, format_duration
+from instasplat.utils.progress import (
+    HeartbeatPublisher,
+    ProgressEvent,
+    StageProgressTracker,
+    format_duration,
+)
 
 ProgressCb = Callable[[ProgressEvent], None]
 
@@ -200,7 +205,12 @@ class Pipeline:
                     len(selected),
                     format_duration(ev.stage_eta_sec),
                 )
-                self._run_stage(name, result)
+                hb = HeartbeatPublisher(self._tracker, self.on_progress, interval_sec=1.0)
+                hb.start()
+                try:
+                    self._run_stage(name, result)
+                finally:
+                    hb.stop()
                 # Refresh chunk count after plan for better ETAs
                 if name == "plan_chunks" and self._manifest is not None:
                     self._tracker.chunk_count = len(self._manifest.chunks)

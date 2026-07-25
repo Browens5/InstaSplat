@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QObject, QThread, QTimer, Signal
@@ -36,7 +37,12 @@ from instasplat.pipeline import Pipeline
 from instasplat.utils.control import RunController
 from instasplat.utils.deps import report_dict
 from instasplat.utils.jobs import inspect_job, is_job_dir, load_job_config
-from instasplat.utils.progress import ProgressEvent, format_duration
+from instasplat.utils.progress import (
+    ProgressEvent,
+    format_duration,
+    live_progress_from_event,
+    stage_fraction,
+)
 from instasplat.utils.stages import ALL_STAGES, SINGLE_STAGES, STAGE_HELP, TILED_STAGES
 
 
@@ -266,7 +272,9 @@ class Worker(QObject):
     def run(self) -> None:
         def on_progress(ev: ProgressEvent) -> None:
             self.progress.emit(ev)
-            self.log.emit(ev.terminal_line())
+            # Heartbeats update bars only — avoid flooding the log widget
+            if not ev.quiet:
+                self.log.emit(ev.terminal_line())
 
         try:
             result = Pipeline(
@@ -320,23 +328,33 @@ class StageRow(QWidget):
 
     def set_progress(self, frac: float, *, state: str = "idle") -> None:
         value = int(max(0.0, min(1.0, frac)) * 1000)
+        # Avoid redundant polish churn on every 1s tick when state/value unchanged
+        prev_state = getattr(self, "_ui_state", None)
+        prev_value = getattr(self, "_ui_value", None)
+        self._ui_state = state
+        self._ui_value = value
         self.bar.setValue(value)
         if state == "done":
             self.bar.setObjectName("taskDone")
             self.bar.setFormat("done")
         elif state == "active":
             self.bar.setObjectName("taskActive")
-            self.bar.setFormat("%p%")
+            pct = int(round(frac * 100))
+            self.bar.setFormat(f"{pct}%")
         elif state == "pending":
             self.bar.setObjectName("task")
             self.bar.setFormat("…")
             self.bar.setValue(0)
+            self._ui_value = 0
         else:
             self.bar.setObjectName("task")
-            self.bar.setFormat("%p%" if value else "")
-        # Re-apply stylesheet for objectName changes
-        self.bar.style().unpolish(self.bar)
-        self.bar.style().polish(self.bar)
+            self.bar.setFormat(f"{int(round(frac * 100))}%" if value else "")
+        if prev_state != state:
+            self.bar.style().unpolish(self.bar)
+            self.bar.style().polish(self.bar)
+        elif prev_value != value:
+            # Force a repaint when only the value changes (some styles skip it)
+            self.bar.update()
 
     def reset_progress(self) -> None:
         self.set_progress(0.0, state="idle")
@@ -353,7 +371,10 @@ class MainWindow(QMainWindow):
         self.controller = RunController()
         self._last_event: ProgressEvent | None = None
         self._paused = False
+        self._run_active = False
         self._run_stages: list[str] = []
+        self._run_wall_t0: float | None = None
+        self._stage_wall_t0: float | None = None
         self._job_dir: Path | None = None
         self._suppress_stage_reset = False
         self.stage_rows: dict[str, StageRow] = {}
@@ -817,14 +838,10 @@ class MainWindow(QMainWindow):
         index_of = {n: i for i, n in enumerate(run)}
         cur_idx = index_of.get(ev.stage, ev.stage_index)
 
-        # In-stage fraction from elapsed vs ETA
-        if ev.status == "finished" and ev.stage_eta_sec == 0.0:
+        if ev.status == "finished":
             cur_frac = 1.0
         else:
-            rem = ev.stage_eta_sec if ev.stage_eta_sec is not None else 0.0
-            denom = ev.stage_elapsed_sec + max(rem, 0.0)
-            cur_frac = (ev.stage_elapsed_sec / denom) if denom > 0 else 0.0
-            cur_frac = min(0.99, cur_frac)
+            cur_frac = stage_fraction(ev.stage_elapsed_sec, ev.stage_eta_sec)
 
         for name, row in self.stage_rows.items():
             if name not in index_of:
@@ -843,12 +860,17 @@ class MainWindow(QMainWindow):
                 row.set_progress(0.0, state="pending")
 
         # Sticky current-task bar
-        self.task_progress.setFormat(f"{ev.stage}  %p%")
         if ev.status == "finished" and cur_idx >= len(run) - 1:
             self.task_progress.setValue(1000)
             self.task_progress.setFormat("complete")
+        elif ev.status == "finished":
+            self.task_progress.setValue(1000)
+            self.task_progress.setFormat(f"{ev.stage} done")
         else:
-            self.task_progress.setValue(int(cur_frac * 1000) if ev.status != "finished" else 1000)
+            pct = int(round(cur_frac * 100))
+            self.task_progress.setValue(int(cur_frac * 1000))
+            self.task_progress.setFormat(f"{ev.stage}  {pct}%")
+            self.task_progress.update()
 
     def _build_config(self) -> PipelineConfig:
         formats = [fmt for fmt, cb in self.format_cbs.items() if cb.isChecked()]
@@ -925,6 +947,10 @@ class MainWindow(QMainWindow):
             return
         self.controller = RunController()
         self._paused = False
+        self._run_active = True
+        self._run_wall_t0 = time.time()
+        self._stage_wall_t0 = self._run_wall_t0
+        self._last_event = None
         self._run_stages = list(cfg.stages)
         self._reset_stage_bars(self._run_stages)
         self.task_progress.setValue(0)
@@ -974,11 +1000,19 @@ class MainWindow(QMainWindow):
     def _on_progress(self, ev: object) -> None:
         if not isinstance(ev, ProgressEvent):
             return
+        # New stage → reset wall clock used for live bar ticks
+        if (
+            self._last_event is None
+            or self._last_event.stage != ev.stage
+            or (self._last_event.status == "finished" and ev.status == "running")
+        ):
+            self._stage_wall_t0 = time.time() - max(0.0, ev.stage_elapsed_sec)
         self._last_event = ev
-        status = "PAUSED" if self._paused or ev.status == "paused" else ev.stage
-        self.status_label.setText(
-            f"{status}  ({ev.stage_index + 1}/{ev.stage_count}) — {ev.message}"
-        )
+        if not ev.quiet or ev.status != "running":
+            status = "PAUSED" if self._paused or ev.status == "paused" else ev.stage
+            self.status_label.setText(
+                f"{status}  ({ev.stage_index + 1}/{ev.stage_count}) — {ev.message}"
+            )
         self.progress_bar.setValue(int(ev.overall_frac * 1000))
         self._update_stage_bars(ev)
         self._refresh_eta()
@@ -987,6 +1021,23 @@ class MainWindow(QMainWindow):
         ev = self._last_event
         if ev is None:
             return
+        # While a stage is running, recompute bars/ETA from wall clock every tick
+        if (
+            self._run_active
+            and not self._paused
+            and ev.status == "running"
+            and self._stage_wall_t0 is not None
+            and self._run_wall_t0 is not None
+        ):
+            live = live_progress_from_event(
+                ev,
+                stage_wall_t0=self._stage_wall_t0,
+                run_wall_t0=self._run_wall_t0,
+            )
+            self._last_event = live
+            self.progress_bar.setValue(int(live.overall_frac * 1000))
+            self._update_stage_bars(live)
+            ev = live
         if self._paused:
             self.eta_label.setText(
                 f"PAUSED · Task elapsed {format_duration(ev.stage_elapsed_sec)} · "
@@ -1001,6 +1052,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_finished(self, ok: bool, message: str) -> None:
+        self._run_active = False
         self.run_btn.setEnabled(True)
         self.pause_btn.setEnabled(False)
         self.pause_btn.setText("Pause")

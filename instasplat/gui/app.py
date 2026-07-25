@@ -758,13 +758,17 @@ class MainWindow(QMainWindow):
 
     def _install_brush(self) -> None:
         self.install_brush_btn.setEnabled(False)
-        self.log.append("Installing Brush (cargo release build)…")
+        self.log.append(
+            "Installing Brush (GitHub release binary if available; else Rust 1.88+ source build)…"
+        )
         QApplication.processEvents()
         try:
             from instasplat.utils.brush_install import install_brush
 
-            result = install_brush()
+            result = install_brush(force_rebuild=True)
             self.log.append(result.message)
+            if result.log_path and not result.ok:
+                self.log.append(f"Log: {result.log_path}")
             if result.ok:
                 QMessageBox.information(self, "InstaSplat", result.message)
             else:

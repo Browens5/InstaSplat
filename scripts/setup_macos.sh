@@ -29,7 +29,7 @@ fi
 
 echo "==> Building / installing Brush"
 if [[ -x "$ROOT/scripts/install_brush.sh" ]]; then
-  "$ROOT/scripts/install_brush.sh" || echo "WARN: Brush install failed — run: instasplat install-brush"
+  "$ROOT/scripts/install_brush.sh" || echo "WARN: Brush install failed — run: instasplat install-brush (Apple Silicon uses GitHub release; needs Rust 1.88+ for --from-source)"
 elif command -v instasplat >/dev/null 2>&1; then
   instasplat install-brush || true
 else

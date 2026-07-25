@@ -468,13 +468,27 @@ def _execute_pipeline(cfg: PipelineConfig) -> None:
 
 @app.command("install-brush")
 def install_brush_cmd(
-    force: bool = typer.Option(False, "--force", help="Rebuild even if brush is on PATH"),
+    force: bool = typer.Option(False, "--force", help="Reinstall even if brush is on PATH"),
+    from_source: bool = typer.Option(
+        False,
+        "--from-source",
+        help="Force cargo build (needs Rust 1.88+). Default: download GitHub release binary.",
+    ),
 ) -> None:
-    """Clone and build ArthurBrussee/brush (Metal/WebGPU), install to ~/.local/bin."""
+    """Install ArthurBrussee/brush (Metal/WebGPU) to ~/.local/bin."""
     from instasplat.utils.brush_install import install_brush
 
-    console.print("[cyan]Installing Brush…[/cyan] (Rust release build; may take several minutes)")
-    result = install_brush(force_rebuild=force)
+    if from_source:
+        console.print(
+            "[cyan]Installing Brush from source…[/cyan] "
+            "(Rust 1.88+ release build; may take several minutes)"
+        )
+    else:
+        console.print(
+            "[cyan]Installing Brush…[/cyan] "
+            "(prefers GitHub release binary; falls back to cargo if needed)"
+        )
+    result = install_brush(force_rebuild=force, from_source=from_source)
     if result.ok:
         console.print(f"[green]OK[/green] {result.message}")
         if result.brush_path:

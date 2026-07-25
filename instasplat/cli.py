@@ -109,6 +109,10 @@ def run(
         "--trainer",
         help="Training backend: brush (default) or opensplat (Metal MPS)",
     ),
+    no_refine: bool = typer.Option(False, "--no-refine", help="Disable pose refine stage"),
+    streamed_lod: bool = typer.Option(
+        False, "--streamed-lod", help="Also export lod-meta.json streamed SOG"
+    ),
 ) -> None:
     """Run the reconstruction pipeline."""
     if config is not None:
@@ -132,6 +136,10 @@ def run(
         if trainer not in {"brush", "opensplat"}:
             raise typer.BadParameter("trainer must be 'brush' or 'opensplat'")
         cfg.train.backend = trainer  # type: ignore[assignment]
+    if no_refine:
+        cfg.refine.enabled = False
+    if streamed_lod:
+        cfg.export.streamed_lod = True
     if stages:
         cfg.stages = [s.strip() for s in stages.split(",") if s.strip()]
     if fps is not None:

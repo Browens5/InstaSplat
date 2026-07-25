@@ -12,8 +12,10 @@ from typing import Any, ClassVar
 from instasplat.config import PipelineConfig
 from instasplat.stages.export import ExportResult, run_export
 from instasplat.stages.extract import ExtractResult, run_extract
+from instasplat.stages.fallback import run_fallback_poses
 from instasplat.stages.ingest import IngestResult, run_ingest
 from instasplat.stages.mask import MaskResult, run_mask
+from instasplat.stages.refine import RefineResult, run_refine
 from instasplat.stages.scale import ScaleResult, run_scale
 from instasplat.stages.sfm import SfMResult, run_sfm
 from instasplat.stages.tiled import (
@@ -28,6 +30,7 @@ from instasplat.stages.tiled import (
 from instasplat.stages.train import TrainResult, run_train
 from instasplat.utils.chunking import ChunkManifest as _ChunkManifest
 from instasplat.utils.metal import detect_metal
+from instasplat.utils.nerfstudio import PackageResult, run_package
 from instasplat.utils.paths import JobPaths
 from instasplat.utils.process import get_logger
 
@@ -43,9 +46,11 @@ class PipelineResult:
     extract: ExtractResult | None = None
     mask: MaskResult | None = None
     sfm: SfMResult | None = None
+    refine: RefineResult | None = None
     scale: ScaleResult | None = None
     train: TrainResult | None = None
     export: ExportResult | None = None
+    package: PackageResult | None = None
     tiled: TiledResult | None = None
     error: str | None = None
 
@@ -67,6 +72,7 @@ class PipelineResult:
             "extract": _safe(self.extract),
             "mask": _safe(self.mask),
             "sfm": _safe(self.sfm),
+            "refine": _safe(self.refine),
             "scale": _safe(self.scale),
             "train": _safe(self.train),
             "export": {
@@ -75,6 +81,7 @@ class PipelineResult:
             }
             if self.export
             else None,
+            "package": _safe(self.package),
             "tiled": {
                 "success": self.tiled.success,
                 "root": str(self.tiled.root),
@@ -96,9 +103,11 @@ class Pipeline:
         "extract",
         "mask",
         "sfm",
+        "refine",
         "scale",
         "train",
         "export",
+        "package",
         "plan_chunks",
         "process_chunks",
         "align_chunks",
@@ -111,6 +120,7 @@ class Pipeline:
         "process_chunks",
         "align_chunks",
         "merge_chunks",
+        "package",
     ]
 
     def __init__(self, cfg: PipelineConfig, on_progress: ProgressCb | None = None):
@@ -139,9 +149,11 @@ class Pipeline:
                     "extract",
                     "mask",
                     "sfm",
+                    "refine",
                     "scale",
                     "train",
                     "export",
+                    "package",
                 ]
                 wanted = self.cfg.stages or single
                 selected = [s for s in single if s in wanted]
@@ -179,6 +191,18 @@ class Pipeline:
             self.cfg.mask.device = "cpu"
         self.log.info("Metal defaults: %s (YOLO device=%s)", status.notes, self.cfg.mask.device)
 
+    def _active_model(self, result: PipelineResult) -> Path:
+        if result.refine is not None and result.refine.model_dir.exists():
+            return result.refine.model_dir
+        if result.scale is not None and result.scale.model_dir.exists():
+            return result.scale.model_dir
+        if result.sfm is not None:
+            return result.sfm.model_dir
+        refined = self.paths.root / "03b_refine" / "sparse" / "0"
+        if refined.exists():
+            return refined
+        return self.paths.colmap_model
+
     def _run_stage(self, name: str, result: PipelineResult) -> None:
         cfg, paths = self.cfg, self.paths
         if name == "ingest":
@@ -188,13 +212,39 @@ class Pipeline:
         elif name == "mask":
             result.mask = run_mask(cfg, paths)
         elif name == "sfm":
-            result.sfm = run_sfm(cfg, paths)
+            try:
+                result.sfm = run_sfm(cfg, paths)
+            except Exception as exc:
+                self.log.warning("SfM failed (%s); trying telemetry fallback", exc)
+                fb = run_fallback_poses(cfg, paths)
+                if fb is None:
+                    raise
+                result.sfm = SfMResult(
+                    model_dir=fb.model_dir,
+                    image_dir=paths.cubemap_images,
+                    mask_dir=paths.cubemap_masks if any(paths.cubemap_masks.glob("*.png")) else None,
+                    mode="telemetry_fallback",
+                    num_images=fb.n_poses,
+                )
+            else:
+                # If mapper produced nothing, still try fallback
+                model = result.sfm.model_dir
+                has = (model / "images.bin").exists() or (model / "images.txt").exists()
+                if not has and not cfg.dry_run:
+                    fb = run_fallback_poses(cfg, paths)
+                    if fb is not None:
+                        result.sfm = SfMResult(
+                            model_dir=fb.model_dir,
+                            image_dir=paths.cubemap_images,
+                            mask_dir=None,
+                            mode="telemetry_fallback",
+                            num_images=fb.n_poses,
+                        )
+        elif name == "refine":
+            model = result.sfm.model_dir if result.sfm else paths.colmap_model
+            result.refine = run_refine(cfg, paths, model)
         elif name == "scale":
-            model = (
-                result.sfm.model_dir
-                if result.sfm is not None
-                else paths.colmap_model
-            )
+            model = self._active_model(result)
             if not model.exists() and not cfg.dry_run:
                 candidates = list(paths.colmap_sparse.glob("*"))
                 dirs = [c for c in candidates if c.is_dir() and not c.name.endswith("_txt")]
@@ -209,11 +259,16 @@ class Pipeline:
                 else paths.scaled_model
             )
             if not model.exists():
-                model = result.sfm.model_dir if result.sfm else paths.colmap_model
+                model = self._active_model(result)
             result.train = run_train(cfg, paths, model)
         elif name == "export":
             ply = result.train.ply_path if result.train else None
             result.export = run_export(cfg, paths, ply)
+        elif name == "package":
+            model = self._active_model(result)
+            if paths.scaled_model.exists():
+                model = paths.scaled_model
+            result.package = run_package(cfg, paths, model)
         elif name == "plan_chunks":
             self._manifest = run_plan_chunks(cfg, paths)
         elif name == "process_chunks":
@@ -234,7 +289,6 @@ class Pipeline:
                 chunk_results=self._chunk_status,
                 merged_outputs=outputs,
             )
-            # Also expose as export-like outputs
             from instasplat.stages.export import ExportResult
 
             ply = outputs.get("ply", paths.export / "scene.ply")

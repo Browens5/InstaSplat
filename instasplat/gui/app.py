@@ -182,6 +182,18 @@ class MainWindow(QMainWindow):
         self.large_8k_cb.setChecked(True)
         opts_form.addRow(self.large_8k_cb)
 
+        self.trainer = QComboBox()
+        self.trainer.addItems(["brush", "opensplat"])
+        opts_form.addRow("Trainer", self.trainer)
+
+        self.refine_cb = QCheckBox("Refine poses (COLMAP BA + GPS/gyro blend)")
+        self.refine_cb.setChecked(True)
+        opts_form.addRow(self.refine_cb)
+
+        self.lod_cb = QCheckBox("Streamed LOD export (lod-meta.json)")
+        self.lod_cb.setChecked(True)
+        opts_form.addRow(self.lod_cb)
+
         self.sfm_mode = QComboBox()
         self.sfm_mode.addItems(["perspective_cubemap", "equirectangular", "auto"])
         opts_form.addRow("SfM mode", self.sfm_mode)
@@ -194,14 +206,14 @@ class MainWindow(QMainWindow):
         self.steps.setRange(1000, 100000)
         self.steps.setSingleStep(1000)
         self.steps.setValue(20000)
-        opts_form.addRow("Brush steps / chunk", self.steps)
+        opts_form.addRow("Train steps / chunk", self.steps)
 
         self.formats = QListWidget()
         self.formats.setSelectionMode(QListWidget.MultiSelection)
         for fmt in ["ply", "sog", "spz", "glb", "html", "csv", "compressed.ply"]:
             item = QListWidgetItem(fmt)
             self.formats.addItem(item)
-            if fmt in ("ply", "sog"):
+            if fmt in ("ply", "sog", "spz"):
                 item.setSelected(True)
         self.formats.setMaximumHeight(110)
         opts_form.addRow("Exports", self.formats)
@@ -273,6 +285,9 @@ class MainWindow(QMainWindow):
         else:
             cfg.extract.fps = float(self.fps.value())
         cfg.mask.enabled = self.mask_cb.isChecked()
+        cfg.train.backend = self.trainer.currentText()  # type: ignore[assignment]
+        cfg.refine.enabled = self.refine_cb.isChecked()
+        cfg.export.streamed_lod = self.lod_cb.isChecked()
         cfg.sfm.mode = self.sfm_mode.currentText()  # type: ignore[assignment]
         cfg.scale.mode = self.scale_mode.currentText()  # type: ignore[assignment]
         cfg.train.total_steps = int(self.steps.value())

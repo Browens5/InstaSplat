@@ -104,6 +104,31 @@ class SfMConfig:
     sequential_overlap: int = 15
     quality: Literal["low", "medium", "high", "extreme"] = "high"
     use_gpu: bool = False  # COLMAP GPU often unavailable on Mac; CPU is fine
+    # If COLMAP fails, synthesize poses from gyro/GPS (LongSplat / on-the-fly style)
+    telemetry_fallback: bool = True
+
+
+@dataclass
+class RefineConfig:
+    """Self-Cali-inspired pose / intrinsic refine before training."""
+
+    enabled: bool = True
+    run_colmap_ba: bool = True
+    refine_intrinsics: bool = True
+    refine_distortion: bool = False  # cubemap pinhole usually has no distortion
+    # Blend factor toward GPS/gyro priors (0=COLMAP only, 1=telemetry only)
+    pose_blend: float = 0.25
+    # Reject tile alignments with RMSE above this (meters) when GPS exists
+    max_align_rmse_m: float = 8.0
+
+
+@dataclass
+class PackageConfig:
+    """Downstream packaging for cloud trainers / LOD."""
+
+    nerfstudio: bool = True
+    copy_images: bool = False
+    hierarchy_manifest: bool = True
 
 
 @dataclass
@@ -171,9 +196,11 @@ class PipelineConfig:
     metal: MetalConfig = field(default_factory=MetalConfig)
     mask: MaskConfig = field(default_factory=MaskConfig)
     sfm: SfMConfig = field(default_factory=SfMConfig)
+    refine: RefineConfig = field(default_factory=RefineConfig)
     scale: ScaleConfig = field(default_factory=ScaleConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
     export: ExportConfig = field(default_factory=ExportConfig)
+    package: PackageConfig = field(default_factory=PackageConfig)
     # Stages to run; empty = all
     stages: list[str] = field(
         default_factory=lambda: [
@@ -181,9 +208,11 @@ class PipelineConfig:
             "extract",
             "mask",
             "sfm",
+            "refine",
             "scale",
             "train",
             "export",
+            "package",
         ]
     )
     dry_run: bool = False
@@ -214,8 +243,13 @@ class PipelineConfig:
         # LichtFeld / Niantic delivery set
         self.export.formats = ["ply", "sog", "spz"]
         self.export.min_opacity = 0.05
-        self.export.streamed_lod = False
+        self.export.streamed_lod = True
         self.chunk.merge_prune_opacity = 0.05
+        self.refine.enabled = True
+        self.refine.pose_blend = 0.25
+        self.package.nerfstudio = True
+        self.package.hierarchy_manifest = True
+        self.sfm.telemetry_fallback = True
         if self.scale.mode == "none":
             self.scale.mode = "gps"
         self.stages = [
@@ -224,6 +258,7 @@ class PipelineConfig:
             "process_chunks",
             "align_chunks",
             "merge_chunks",
+            "package",
         ]
 
     def to_dict(self) -> dict[str, Any]:
@@ -271,9 +306,11 @@ class PipelineConfig:
             metal=_section("metal", MetalConfig),
             mask=_section("mask", MaskConfig),
             sfm=_section("sfm", SfMConfig),
+            refine=_section("refine", RefineConfig),
             scale=_section("scale", ScaleConfig),
             train=_section("train", TrainConfig),
             export=_section("export", ExportConfig),
+            package=_section("package", PackageConfig),
             stages=list(data.get("stages") or []),
             dry_run=bool(data.get("dry_run", False)),
             skip_existing=bool(data.get("skip_existing", True)),

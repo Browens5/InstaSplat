@@ -100,17 +100,19 @@ InstaSplat’s Mac-local, tiled 8K pipeline.
 
 ### Now (implemented or wiring)
 1. Trainer backend switch: `brush` (default) | `opensplat` (Metal MPS build).
-2. Large-8k default exports: `ply`, `sog`, `spz`.
+2. Large-8k default exports: `ply`, `sog`, `spz` (+ optional streamed LOD).
 3. Capture guidelines doc (sequential, overlap, speed, dynamics).
 4. Post-merge opacity/NaN prune (LongSplat-style size control).
-5. Optional streamed SOG / LOD export flag.
+5. Pose refine: COLMAP BA + GPS/gyro blend (Self-Cali-inspired).
+6. Robust tile align: RANSAC Umeyama + ICP + RMSE quality gate.
+7. Telemetry pose fallback when COLMAP fails.
+8. Nerfstudio `transforms.json` + hierarchy anchor manifest packaging.
 
 ### Next
-1. **Self-Cali / fisheye refine** after COLMAP (distortion + pose).
-2. **Native equirect training** via cloud 3DGUT/gsplat when MediaSDK stitch is imperfect.
-3. **Hierarchy build** after tile merge (Kerbl hierarchical merger) for viewer LOD.
-4. **splatreg**-class merge when GPS weak (feature-based Sim3 on splat neighborhoods).
-5. **Unposed fallback** (MASt3R / on-the-fly pose init) if COLMAP collapses.
+1. **Native equirect training** via cloud 3DGUT/gsplat when MediaSDK stitch is imperfect.
+2. **Kerbl hierarchy merger** binary integration for true LOD trees.
+3. **MASt3R / on-the-fly** learned pose init (beyond gyro/GPS prior).
+4. Full Self-Cali distortion network (iResNet) for raw fisheye.
 
 ### Later / cloud-only
 1. LichtFeld or 3dgrut workers for CUDA MCMC / GUT.

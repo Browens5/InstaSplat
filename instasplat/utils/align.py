@@ -107,6 +107,99 @@ def umeyama_alignment(
     return scale, R, t, rmse
 
 
+def umeyama_ransac(
+    src: np.ndarray,
+    dst: np.ndarray,
+    *,
+    with_scale: bool = True,
+    thresh_m: float = 2.0,
+    iters: int = 64,
+    min_inliers: int = 3,
+    rng: np.random.Generator | None = None,
+) -> tuple[float, np.ndarray, np.ndarray, float, int]:
+    """
+    RANSAC wrapper around Umeyama for robust GPS↔COLMAP alignment (splatreg-ish).
+    Returns scale, R, t, inlier_rmse, n_inliers.
+    """
+    rng = rng or np.random.default_rng(0)
+    n = src.shape[0]
+    if n < 3:
+        s, R, t, rmse = umeyama_alignment(src, dst, with_scale=with_scale)
+        return s, R, t, rmse, n
+
+    best = None
+    for _ in range(iters):
+        idx = rng.choice(n, size=min(3, n), replace=False)
+        try:
+            s, R, t, _ = umeyama_alignment(src[idx], dst[idx], with_scale=with_scale)
+        except Exception:  # noqa: BLE001
+            continue
+        aligned = (s * (R @ src.T)).T + t
+        err = np.linalg.norm(aligned - dst, axis=1)
+        inliers = np.where(err < thresh_m)[0]
+        if len(inliers) < min_inliers:
+            continue
+        s2, R2, t2, rmse = umeyama_alignment(src[inliers], dst[inliers], with_scale=with_scale)
+        score = (len(inliers), -rmse)
+        if best is None or score > best[0]:
+            best = (score, s2, R2, t2, rmse, len(inliers))
+    if best is None:
+        s, R, t, rmse = umeyama_alignment(src, dst, with_scale=with_scale)
+        return s, R, t, rmse, n
+    _, s, R, t, rmse, nin = best
+    return s, R, t, rmse, nin
+
+
+def icp_se3(
+    src: np.ndarray,
+    dst: np.ndarray,
+    *,
+    max_iters: int = 20,
+    reject_m: float = 5.0,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """
+    Point-to-point ICP (no scale) refining R,t so src → dst.
+    Assumes rough pre-alignment (e.g. after Umeyama).
+    """
+    R = np.eye(3, dtype=np.float64)
+    t = np.zeros(3, dtype=np.float64)
+    cur = src.copy()
+    rmse = float("inf")
+    for _ in range(max_iters):
+        # Nearest neighbor in dst
+        d2 = ((cur[:, None, :] - dst[None, :, :]) ** 2).sum(axis=2)
+        nn = np.argmin(d2, axis=1)
+        paired = dst[nn]
+        dist = np.sqrt(d2[np.arange(len(cur)), nn])
+        keep = dist < reject_m
+        if keep.sum() < 3:
+            break
+        s_k = cur[keep]
+        d_k = paired[keep]
+        # rigid Kabsch
+        mu_s, mu_d = s_k.mean(0), d_k.mean(0)
+        H = ((d_k - mu_d).T @ (s_k - mu_s)) / max(len(s_k), 1)
+        U, _, Vt = np.linalg.svd(H)
+        d = np.ones(3)
+        if np.linalg.det(U @ Vt) < 0:
+            d[-1] = -1
+        dR = U @ np.diag(d) @ Vt
+        dt = mu_d - dR @ mu_s
+        R = dR @ R
+        t = dR @ t + dt
+        cur = (dR @ cur.T).T + dt
+        rmse = float(np.sqrt(np.mean(dist[keep] ** 2)))
+    return R, t, rmse
+
+
+def apply_se3_to_sim3(sim: Sim3, R_delta: np.ndarray, t_delta: np.ndarray) -> Sim3:
+    """Left-multiply rigid delta onto existing Sim3."""
+    s, R, t = sim.as_matrices()
+    R2 = R_delta @ R
+    t2 = R_delta @ t + t_delta
+    return Sim3(s, R2.tolist(), t2.tolist())
+
+
 def world_anchors_from_telemetry(
     frame_times: list[float],
     gps: GpsSeries | None,
@@ -192,16 +285,24 @@ def align_chunk_to_world(
             uniq.setdefault(float(t), []).append(c)
         src_pts = np.stack([np.mean(v, axis=0) for v in uniq.values()], axis=0)
         dst_pts = np.stack([interpolate_xyz(gps, t) for t in uniq.keys()], axis=0)
-        scale, R, t, rmse = umeyama_alignment(src_pts, dst_pts, with_scale=True)
-        # Optional gyro rotation prior: blend absolute yaw if useful
+        scale, R, t, rmse, nin = umeyama_ransac(src_pts, dst_pts, with_scale=True)
+        method = "umeyama_ransac_gps"
+        # Optional ICP polish in metric space after scale applied
+        aligned = (scale * (R @ src_pts.T)).T + t
+        if len(aligned) >= 4:
+            Rd, td, icp_rmse = icp_se3(aligned, dst_pts)
+            R = Rd @ R
+            t = Rd @ t + td
+            rmse = icp_rmse
+            method = "umeyama_ransac_icp_gps"
         if gyro is not None and len(uniq) >= 2:
-            method = "umeyama_gps_gyro"
+            method = method + "+gyro"
         return ChunkAlignment(
             chunk_id=chunk_id,
             sim3=Sim3(scale, R.tolist(), t.tolist()),
             rmse_m=rmse,
             method=method,
-            n_anchors=len(src_pts),
+            n_anchors=int(nin),
         )
 
     # No GPS: align consecutive chunks later via overlap; here keep identity

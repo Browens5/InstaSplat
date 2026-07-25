@@ -206,7 +206,7 @@ def process_one_chunk(
 
     child_cfg = _chunk_pipeline_config(cfg, plan, parent_paths)
     # Skip extract stage since frames already written; run remaining
-    child_cfg.stages = ["mask", "sfm", "scale", "train", "export"]
+    child_cfg.stages = ["mask", "sfm", "refine", "scale", "train", "export"]
     # Ensure ingest video path exists for any tool that probes it
     if not chunk_paths.video.exists():
         (chunk_paths.ingest / "equirect_source.txt").write_text(str(source_video), encoding="utf-8")
@@ -391,6 +391,37 @@ def run_align_chunks(cfg: PipelineConfig, paths: JobPaths, manifest: ChunkManife
                         )
 
         alignments.append(align)
+        # Quality gate: if GPS alignment RMSE is terrible, fall back to overlap chain
+        max_rmse = cfg.refine.max_align_rmse_m
+        if (
+            align.rmse_m is not None
+            and align.rmse_m > max_rmse
+            and prev_align is not None
+            and images_txt is not None
+            and images_txt.exists()
+        ):
+            log.warning(
+                "%s align RMSE %.2fm > %.2fm — falling back to overlap chain",
+                plan.chunk_id,
+                align.rmse_m,
+                max_rmse,
+            )
+            images = read_images_txt(images_txt)
+            local = camera_centers(images)
+            if prev_centers_world is not None and len(local) >= 2:
+                overlap_sim = align_overlap_sim3(
+                    prev_centers_world[-min(20, len(prev_centers_world)) :],
+                    local[: min(20, len(local))],
+                )
+                align = ChunkAlignment(
+                    chunk_id=plan.chunk_id,
+                    sim3=compose_sim3(prev_align.sim3, overlap_sim),
+                    rmse_m=None,
+                    method="overlap_chain_rmse_reject",
+                    n_anchors=min(20, len(local)),
+                )
+                alignments[-1] = align
+
         # Update prev world centers estimate
         if images_txt is not None and images_txt.exists():
             s, R, t = align.sim3.as_matrices()

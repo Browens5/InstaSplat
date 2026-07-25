@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import functools
 import shutil
+import sqlite3
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -17,6 +19,7 @@ class ColmapCliCaps:
     max_num_features: str
     match_use_gpu: str
     modern: bool  # True when FeatureExtraction.* namespace exists
+    supports_equirectangular: bool = False
 
 
 def _help_text(colmap: str, command: str) -> str:
@@ -81,13 +84,50 @@ def detect_colmap_caps(colmap_bin: str | None = None) -> ColmapCliCaps:
             "--FeatureMatching.use_gpu" if modern else "--SiftMatching.use_gpu"
         )
 
+    # Recent COLMAP builds list EQUIRECTANGULAR in ImageReader.camera_model help
+    supports_eq = "EQUIRECTANGULAR" in extract_help
+
     return ColmapCliCaps(
         max_image_size=max_image_size,
         extract_use_gpu=extract_use_gpu,
         max_num_features=max_num_features,
         match_use_gpu=match_use_gpu,
         modern=modern or (not legacy_size),
+        supports_equirectangular=supports_eq,
     )
+
+
+def db_image_count(database: Path) -> int:
+    """Return number of images registered in a COLMAP SQLite database."""
+    if not Path(database).exists():
+        return 0
+    try:
+        conn = sqlite3.connect(str(database))
+        try:
+            row = conn.execute("SELECT COUNT(*) FROM images").fetchone()
+            return int(row[0]) if row else 0
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return 0
+
+
+def list_readable_images(image_dir: Path) -> list[Path]:
+    """List JPG/PNG images that exist and are readable (skips broken symlinks)."""
+    image_dir = Path(image_dir)
+    if not image_dir.is_dir():
+        return []
+    out: list[Path] = []
+    for p in sorted(image_dir.iterdir()):
+        if not p.is_file():
+            continue
+        if p.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
+            continue
+        # Broken symlink → exists() is False
+        if not p.exists():
+            continue
+        out.append(p)
+    return out
 
 
 def quality_feature_args(quality: str, caps: ColmapCliCaps | None = None) -> list[str]:

@@ -48,7 +48,7 @@ Sidecar names next to the MP4: `gyro.csv`, `gps.csv`, or `<stem>.gyro.csv`.
 
 | Stage | Device |
 |-------|--------|
-| YOLO people masks | PyTorch **MPS** |
+| YOLO people masks | PyTorch **MPS** (auto CPU fallback on known MPS crashes) |
 | Cubemap remap | CPU OpenCV |
 | COLMAP | CPU (typical Homebrew) |
 | Brush train | **Metal / WebGPU** (serialized per tile) |

@@ -13,23 +13,26 @@
 
 ```bash
 git clone <this-repo> && cd InstaSplat
-./scripts/setup_macos.sh
+./scripts/setup_macos.sh          # brew tools + auto-build Brush
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[gui,dev]"
 instasplat doctor
+# If Brush was not built during setup:
+instasplat install-brush
 ```
 
 ## Manual installs
 
 ```bash
-brew install ffmpeg exiftool colmap
+brew install ffmpeg exiftool colmap git
 npm install -g @playcanvas/splat-transform
 
-# Brush (from source)
-git clone https://github.com/ArthurBrussee/brush.git
-cd brush && cargo build --release
-# put target/release/brush on your PATH
+# Brush (auto)
+instasplat install-brush
+# or: ./scripts/install_brush.sh
+# clones to ~/.cache/instasplat/brush, cargo build --release,
+# symlinks to ~/.local/bin/brush and ~/.cargo/bin/brush
 ```
 
 ## Insta360 Studio export checklist

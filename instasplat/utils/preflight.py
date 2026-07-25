@@ -49,7 +49,8 @@ def run_preflight(cfg: PipelineConfig, paths: JobPaths) -> PreflightResult:
     if not trainer_ok:
         result.blocking.append(
             "No Metal trainer found (brush or opensplat). "
-            "Install Brush (cargo) or OpenSplat with -DGPU_RUNTIME=MPS."
+            "Run `instasplat install-brush` (auto cargo release build) "
+            "or build OpenSplat with -DGPU_RUNTIME=MPS."
         )
     if not deps.get("splat-transform") or not deps["splat-transform"].available:
         result.blocking.append("Missing splat-transform (npm i -g @playcanvas/splat-transform)")

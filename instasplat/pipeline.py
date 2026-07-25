@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -29,12 +28,19 @@ from instasplat.stages.tiled import (
 )
 from instasplat.stages.train import TrainResult, run_train
 from instasplat.utils.chunking import ChunkManifest as _ChunkManifest
+from instasplat.utils.control import (
+    PipelineStopped,
+    RunController,
+    reset_controller,
+    set_controller,
+)
 from instasplat.utils.metal import detect_metal
 from instasplat.utils.nerfstudio import PackageResult, run_package
 from instasplat.utils.paths import JobPaths
 from instasplat.utils.process import get_logger
+from instasplat.utils.progress import ProgressEvent, StageProgressTracker, format_duration
 
-ProgressCb = Callable[[str, float, str], None]
+ProgressCb = Callable[[ProgressEvent], None]
 
 
 @dataclass
@@ -125,16 +131,30 @@ class Pipeline:
         "package",
     ]
 
-    def __init__(self, cfg: PipelineConfig, on_progress: ProgressCb | None = None):
+    def __init__(
+        self,
+        cfg: PipelineConfig,
+        on_progress: ProgressCb | None = None,
+        controller: RunController | None = None,
+    ):
         self.cfg = cfg
         self.paths = JobPaths(cfg.work_dir())
-        self.on_progress = on_progress or (lambda *_: None)
+        self.on_progress = on_progress or (lambda _ev: None)
+        self.controller = controller or RunController()
         self.log = get_logger("instasplat.pipeline")
         self._manifest: ChunkManifest | _ChunkManifest | None = None
         self._chunk_status: dict[str, bool] = {}
         self._alignments = None
+        self._tracker: StageProgressTracker | None = None
 
     def run(self, stages: list[str] | None = None) -> PipelineResult:
+        token = set_controller(self.controller)
+        try:
+            return self._run_inner(stages)
+        finally:
+            reset_controller(token)
+
+    def _run_inner(self, stages: list[str] | None = None) -> PipelineResult:
         self._apply_metal_defaults()
         self.paths.ensure()
         self.cfg.save(self.paths.config)
@@ -163,15 +183,38 @@ class Pipeline:
             selected = [s for s in self.STAGE_ORDER if s in stages]
 
         result = PipelineResult(success=False, paths=self.paths)
-        total = len(selected)
+        self._tracker = StageProgressTracker(stages=selected)
         try:
             for i, name in enumerate(selected):
-                self.on_progress(name, i / max(total, 1), f"Starting {name}")
-                t0 = time.time()
+                self.controller.checkpoint(name)
+                ev = self._tracker.start_stage(name, i)
+                self.on_progress(ev)
+                self.log.info(
+                    "▶ %s (%d/%d) — ETA %s",
+                    name,
+                    i + 1,
+                    len(selected),
+                    format_duration(ev.stage_eta_sec),
+                )
                 self._run_stage(name, result)
-                result.stage_timings[name] = time.time() - t0
-                self.on_progress(name, (i + 1) / max(total, 1), f"Finished {name}")
+                # Refresh chunk count after plan for better ETAs
+                if name == "plan_chunks" and self._manifest is not None:
+                    self._tracker.chunk_count = len(self._manifest.chunks)
+                done = self._tracker.finish_stage(name, i)
+                result.stage_timings[name] = done.stage_elapsed_sec
+                self.on_progress(done)
+                self.log.info(
+                    "■ %s finished in %s (overall elapsed %s, overall ETA %s)",
+                    name,
+                    format_duration(done.stage_elapsed_sec),
+                    format_duration(done.overall_elapsed_sec),
+                    format_duration(done.overall_eta_sec),
+                )
             result.success = True
+        except PipelineStopped as exc:
+            self.log.warning("Pipeline stopped: %s", exc)
+            result.error = str(exc)
+            result.success = False
         except Exception as exc:
             self.log.exception("Pipeline failed")
             result.error = str(exc)

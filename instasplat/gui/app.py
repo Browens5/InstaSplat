@@ -170,27 +170,31 @@ class MainWindow(QMainWindow):
         opts_form = QFormLayout(opts)
         self.fps = QDoubleSpinBox()
         self.fps.setRange(0.1, 30.0)
-        self.fps.setValue(2.0)
+        self.fps.setValue(6.0)
         self.fps.setSingleStep(0.5)
-        opts_form.addRow("Extract FPS", self.fps)
+        opts_form.addRow("Base sample FPS", self.fps)
 
         self.mask_cb = QCheckBox("Mask people with YOLO")
         self.mask_cb.setChecked(True)
         opts_form.addRow(self.mask_cb)
+
+        self.large_8k_cb = QCheckBox("Large 8K@30 tiled mode (auto-chunk + gyro/GPS align + Metal)")
+        self.large_8k_cb.setChecked(True)
+        opts_form.addRow(self.large_8k_cb)
 
         self.sfm_mode = QComboBox()
         self.sfm_mode.addItems(["perspective_cubemap", "equirectangular", "auto"])
         opts_form.addRow("SfM mode", self.sfm_mode)
 
         self.scale_mode = QComboBox()
-        self.scale_mode.addItems(["none", "known_distance", "gps", "stereo_baseline"])
+        self.scale_mode.addItems(["gps", "none", "known_distance", "stereo_baseline"])
         opts_form.addRow("Metric scale", self.scale_mode)
 
         self.steps = QSpinBox()
         self.steps.setRange(1000, 100000)
         self.steps.setSingleStep(1000)
-        self.steps.setValue(30000)
-        opts_form.addRow("Brush steps", self.steps)
+        self.steps.setValue(20000)
+        opts_form.addRow("Brush steps / chunk", self.steps)
 
         self.formats = QListWidget()
         self.formats.setSelectionMode(QListWidget.MultiSelection)
@@ -220,8 +224,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.log, 1)
 
         note = QLabel(
-            "On macOS, stitch equirect MP4 in Insta360 Studio (MediaSDK is Windows/Linux). "
-            "Brush trains locally via Metal/WebGPU; heavy COLMAP jobs can optionally move to cloud GPUs."
+            "8K@30: tiles are auto-chunked with gyro-dense sampling, aligned via GPS/gyro, "
+            "and trained with Brush on Metal. Stitch equirect MP4 in Insta360 Studio first "
+            "(MediaSDK is Windows/Linux)."
         )
         note.setWordWrap(True)
         note.setObjectName("tagline")
@@ -263,12 +268,17 @@ class MainWindow(QMainWindow):
             output_dir=Path(self.output_edit.text().strip() or "./runs"),
             project_name=self.name_edit.text().strip() or "instasplat_job",
         )
-        cfg.extract.fps = float(self.fps.value())
+        if self.large_8k_cb.isChecked():
+            cfg.enable_large_8k_defaults()
+        else:
+            cfg.extract.fps = float(self.fps.value())
         cfg.mask.enabled = self.mask_cb.isChecked()
         cfg.sfm.mode = self.sfm_mode.currentText()  # type: ignore[assignment]
         cfg.scale.mode = self.scale_mode.currentText()  # type: ignore[assignment]
         cfg.train.total_steps = int(self.steps.value())
         cfg.export.formats = formats  # type: ignore[assignment]
+        if self.large_8k_cb.isChecked():
+            cfg.chunk.base_fps = float(self.fps.value())
         return cfg
 
     def _run(self) -> None:

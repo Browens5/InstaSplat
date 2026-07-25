@@ -9,9 +9,10 @@ from rich.console import Console
 from rich.progress import Progress
 
 from instasplat import __version__
-from instasplat.config import DEFAULT_CONFIG_TEMPLATE, PipelineConfig
+from instasplat.config import DEFAULT_CONFIG_TEMPLATE, LARGE_8K_CONFIG_TEMPLATE, PipelineConfig
 from instasplat.pipeline import Pipeline
 from instasplat.utils.deps import print_report
+from instasplat.utils.metal import metal_report
 
 app = typer.Typer(
     name="instasplat",
@@ -48,6 +49,9 @@ def doctor(
 
     data = deps_mod.report_dict(brush_bin, splat_transform_bin)
     print_report(console)
+    metal = metal_report()
+    console.print("\n[bold]Metal / Apple GPU[/bold]")
+    console.print(metal)
     ready = data["ready_stages"]
     if not ready.get("official_stitch"):
         console.print(
@@ -55,16 +59,22 @@ def doctor(
             "Export a stitched equirectangular MP4 from Insta360 Studio, or use a Linux "
             "cloud/Docker worker for MediaSDK stitching."
         )
+    console.print(
+        "\n[cyan]Large 8K tip:[/cyan] use `instasplat run --large-8k ...` to auto-chunk, "
+        "gyro/GPS-align tiles, and prefer Metal for YOLO + Brush."
+    )
 
 
 @app.command("init-config")
 def init_config(
     out: Path = typer.Option(DEFAULT_CONFIG_PATH, "--out", "-o"),
+    large_8k: bool = typer.Option(False, "--large-8k", help="Write tiled 8K@30 defaults"),
 ) -> None:
     """Write a starter pipeline YAML config."""
     if out.exists():
         raise typer.BadParameter(f"{out} already exists")
-    out.write_text(DEFAULT_CONFIG_TEMPLATE, encoding="utf-8")
+    text = LARGE_8K_CONFIG_TEMPLATE if large_8k else DEFAULT_CONFIG_TEMPLATE
+    out.write_text(text, encoding="utf-8")
     console.print(f"Wrote {out}")
 
 
@@ -79,15 +89,21 @@ def run(
     stages: str | None = typer.Option(
         None,
         "--stages",
-        help="Comma-separated stages: ingest,extract,mask,sfm,scale,train,export",
+        help="Comma-separated stages",
     ),
-    fps: float | None = typer.Option(None, help="Override extract FPS"),
+    fps: float | None = typer.Option(None, help="Override extract FPS (single mode)"),
     no_mask: bool = typer.Option(False, help="Disable YOLO people masking"),
     export_formats: str | None = typer.Option(
         None, "--formats", help="Comma-separated: ply,sog,spz,glb,html,csv,compressed.ply"
     ),
     dry_run: bool = typer.Option(False, help="Print/plan without executing heavy tools"),
     with_viewer: bool = typer.Option(False, help="Open Brush viewer while training"),
+    large_8k: bool = typer.Option(
+        False,
+        "--large-8k",
+        help="Enable tiled 8K@30 mode: auto-chunk, gyro/GPS align, Metal-first",
+    ),
+    tiled: bool = typer.Option(False, "--tiled", help="Alias for enabling chunk.mode=tiled"),
 ) -> None:
     """Run the reconstruction pipeline."""
     if config is not None:
@@ -105,10 +121,13 @@ def run(
             project_name=project_name,
         )
 
+    if large_8k or tiled:
+        cfg.enable_large_8k_defaults()
     if stages:
         cfg.stages = [s.strip() for s in stages.split(",") if s.strip()]
     if fps is not None:
         cfg.extract.fps = fps
+        cfg.chunk.base_fps = fps
     if no_mask:
         cfg.mask.enabled = False
     if export_formats:
@@ -117,6 +136,7 @@ def run(
         cfg.dry_run = True
     if with_viewer:
         cfg.train.with_viewer = True
+        cfg.metal.serialize_brush = False
 
     with Progress() as progress:
         task = progress.add_task("pipeline", total=1.0)
@@ -132,6 +152,9 @@ def run(
         if result.export:
             for k, v in result.export.outputs.items():
                 console.print(f"  {k}: {v}")
+        if result.tiled and result.tiled.chunk_results:
+            ok = sum(1 for v in result.tiled.chunk_results.values() if v)
+            console.print(f"  chunks ok: {ok}/{len(result.tiled.chunk_results)}")
     else:
         console.print(f"[red]Failed[/red]: {result.error}")
         raise typer.Exit(code=1)

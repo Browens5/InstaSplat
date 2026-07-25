@@ -21,6 +21,7 @@ ExportFormat = Literal[
 SfMMode = Literal["perspective_cubemap", "equirectangular", "auto"]
 ScaleMode = Literal["none", "known_distance", "gps", "stereo_baseline"]
 StitchMode = Literal["studio_mp4", "mediasdk", "ffmpeg_fallback", "prestitched"]
+PipelineMode = Literal["single", "tiled"]
 
 
 @dataclass
@@ -36,6 +37,39 @@ class ExtractConfig:
     stitch_mode: StitchMode = "studio_mp4"
     # When stitching is unavailable, accept a pre-exported equirectangular MP4.
     allow_prestitched_mp4: bool = True
+
+
+@dataclass
+class ChunkConfig:
+    """
+    Auto-chunk / tile settings for large 8K@30fps captures.
+
+    Instead of dumping every frame, densify sampling on turns (gyro) and split
+    the timeline into overlapping tiles that are reconstructed independently,
+    then aligned with GPS/gyro and merged.
+    """
+
+    enabled: bool = False
+    duration_sec: float = 25.0
+    overlap_sec: float = 5.0
+    base_fps: float = 6.0
+    max_fps: float = 15.0
+    source_fps_hint: float = 30.0
+    max_frames_per_chunk: int = 180
+    # Soft target path length per chunk when GPS exists (meters)
+    target_path_length_m: float | None = 40.0
+    max_parallel_chunks: int = 1
+
+
+@dataclass
+class MetalConfig:
+    """Apple Metal / MPS preferences for large local jobs."""
+
+    prefer_metal: bool = True
+    # Keep Brush train serial to avoid Metal memory pressure across tiles
+    serialize_brush: bool = True
+    # YOLO device override; empty = auto-detect MPS
+    torch_device: str = ""
 
 
 @dataclass
@@ -118,7 +152,10 @@ class PipelineConfig:
     input_path: Path
     output_dir: Path
     project_name: str = "instasplat_job"
+    mode: PipelineMode = "single"
     extract: ExtractConfig = field(default_factory=ExtractConfig)
+    chunk: ChunkConfig = field(default_factory=ChunkConfig)
+    metal: MetalConfig = field(default_factory=MetalConfig)
     mask: MaskConfig = field(default_factory=MaskConfig)
     sfm: SfMConfig = field(default_factory=SfMConfig)
     scale: ScaleConfig = field(default_factory=ScaleConfig)
@@ -141,6 +178,35 @@ class PipelineConfig:
 
     def work_dir(self) -> Path:
         return self.output_dir / self.project_name
+
+    def enable_large_8k_defaults(self) -> None:
+        """Apply recommended settings for 8K@30 large tiled splats on Metal."""
+        self.mode = "tiled"
+        self.chunk.enabled = True
+        self.chunk.base_fps = 6.0
+        self.chunk.max_fps = 15.0
+        self.chunk.source_fps_hint = 30.0
+        self.chunk.duration_sec = 25.0
+        self.chunk.overlap_sec = 5.0
+        self.chunk.max_frames_per_chunk = 180
+        self.metal.prefer_metal = True
+        self.metal.serialize_brush = True
+        # Device resolved at runtime via detect_metal()
+        self.mask.device = "mps"
+        self.sfm.face_resolution = 1280
+        self.sfm.quality = "high"
+        self.train.max_resolution = 1600
+        self.train.total_steps = 20_000
+        self.export.formats = ["ply", "sog"]
+        if self.scale.mode == "none":
+            self.scale.mode = "gps"
+        self.stages = [
+            "ingest",
+            "plan_chunks",
+            "process_chunks",
+            "align_chunks",
+            "merge_chunks",
+        ]
 
     def to_dict(self) -> dict[str, Any]:
         def _convert(obj: Any) -> Any:
@@ -181,7 +247,10 @@ class PipelineConfig:
             input_path=Path(data["input_path"]),
             output_dir=Path(data["output_dir"]),
             project_name=data.get("project_name", "instasplat_job"),
+            mode=data.get("mode", "single"),
             extract=_section("extract", ExtractConfig),
+            chunk=_section("chunk", ChunkConfig),
+            metal=_section("metal", MetalConfig),
             mask=_section("mask", MaskConfig),
             sfm=_section("sfm", SfMConfig),
             scale=_section("scale", ScaleConfig),
@@ -203,11 +272,28 @@ DEFAULT_CONFIG_TEMPLATE = """\
 input_path: /path/to/VID_....insv
 output_dir: ./runs
 project_name: my_capture
+mode: tiled                 # single | tiled  (tiled = auto-chunk large 8K jobs)
 
 extract:
-  fps: 2.0
+  fps: 2.0                  # used in single mode
   stitch_mode: studio_mp4   # studio_mp4 | mediasdk | ffmpeg_fallback | prestitched
   image_format: jpg
+
+chunk:
+  enabled: true
+  duration_sec: 25.0
+  overlap_sec: 5.0
+  base_fps: 6.0             # densify above this on turns
+  max_fps: 15.0             # still far below 30 source fps, but uses more data
+  source_fps_hint: 30.0
+  max_frames_per_chunk: 180
+  target_path_length_m: 40.0
+  max_parallel_chunks: 1
+
+metal:
+  prefer_metal: true
+  serialize_brush: true
+  torch_device: ""          # empty = auto MPS
 
 mask:
   enabled: true
@@ -217,17 +303,17 @@ mask:
 
 sfm:
   mode: perspective_cubemap # perspective_cubemap | equirectangular | auto
-  face_resolution: 1024
+  face_resolution: 1280
   matcher: sequential
   quality: high
 
 scale:
-  mode: none                # none | known_distance | gps | stereo_baseline
+  mode: gps                 # none | known_distance | gps | stereo_baseline
   # known_distance_m: 2.0
   stereo_baseline_m: 0.065
 
 train:
-  total_steps: 30000
+  total_steps: 20000
   max_resolution: 1600
   with_viewer: false
   brush_bin: brush
@@ -235,12 +321,57 @@ train:
 export:
   formats: [ply, sog]
   filter_nan: true
-  # translate: [0, 0, 0]
-  # rotate_deg: [0, 0, 0]
-  # scale: 1.0
-  # min_opacity: 0.05
   splat_transform_bin: splat-transform
 
-stages: [ingest, extract, mask, sfm, scale, train, export]
+stages: [ingest, plan_chunks, process_chunks, align_chunks, merge_chunks]
 skip_existing: true
+"""
+
+
+LARGE_8K_CONFIG_TEMPLATE = """\
+# Large 8K@30fps tiled Gaussian splat job (Metal-first)
+input_path: /path/to/capture_equirect_8k.mp4
+output_dir: ./runs
+project_name: walk_8k
+mode: tiled
+
+chunk:
+  enabled: true
+  duration_sec: 25.0
+  overlap_sec: 5.0
+  base_fps: 6.0
+  max_fps: 15.0
+  source_fps_hint: 30.0
+  max_frames_per_chunk: 180
+  target_path_length_m: 40.0
+  max_parallel_chunks: 1
+
+metal:
+  prefer_metal: true
+  serialize_brush: true
+
+mask:
+  enabled: true
+  model: yolov8m-seg.pt
+  device: mps
+
+sfm:
+  mode: perspective_cubemap
+  face_resolution: 1280
+  matcher: sequential
+  quality: high
+
+scale:
+  mode: gps
+
+train:
+  total_steps: 20000
+  max_resolution: 1600
+  brush_bin: brush
+
+export:
+  formats: [ply, sog]
+  filter_nan: true
+
+stages: [ingest, plan_chunks, process_chunks, align_chunks, merge_chunks]
 """

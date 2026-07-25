@@ -24,13 +24,24 @@ instasplat gui
 |-------|----------------|---------------|
 | `ingest` | Resolve video source, parse INSV trailer (gyro/accel/GPS) | exiftool, custom trailer parser |
 | `extract` | Sample frames at N fps | ffmpeg |
-| `mask` | Segment people → Brush/COLMAP ignore masks | Ultralytics YOLO (MPS on Apple Silicon) |
+| `mask` | Segment people → Brush/COLMAP ignore masks | Ultralytics YOLO (**MPS / Metal**) |
 | `sfm` | Cubemap (or equirect) views → sparse cloud + poses | COLMAP |
 | `scale` | Optional metric scale | known distance / GPS |
-| `train` | 3D Gaussian splat training | [Brush](https://github.com/ArthurBrussee/brush) |
+| `train` | 3D Gaussian splat training | [Brush](https://github.com/ArthurBrussee/brush) (**Metal/WebGPU**) |
 | `export` | Format conversion + transforms | [splat-transform](https://github.com/playcanvas/splat-transform) |
+| `plan_chunks` / `process_chunks` / `align_chunks` / `merge_chunks` | **Large 8K tiled mode** | gyro/GPS + Metal |
 
 Outputs land under `runs/<project>/06_export/` (`scene.ply`, `scene.sog`, …).
+
+### Large 8K@30fps (tiled)
+
+```bash
+instasplat run --large-8k -i ./capture_equirect_8k.mp4 -o ./runs -n walk_8k
+```
+
+Auto-chunks the capture, densifies frames on turns using gyro, reconstructs each
+tile on Metal, aligns tiles with GPS/gyro Sim3, and merges into one large splat.
+See **[docs/LARGE_8K.md](docs/LARGE_8K.md)**.
 
 ## macOS stitching reality check
 

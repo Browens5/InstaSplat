@@ -105,6 +105,14 @@ class JobPaths:
     def logs(self) -> Path:
         return self.root / "logs"
 
+    @property
+    def chunks(self) -> Path:
+        return self.root / "10_chunks"
+
+    @property
+    def merged(self) -> Path:
+        return self.root / "11_merged"
+
     def ensure(self) -> None:
         for p in (
             self.root,
@@ -119,5 +127,7 @@ class JobPaths:
             self.brush_export,
             self.export,
             self.logs,
+            self.chunks,
+            self.merged,
         ):
             p.mkdir(parents=True, exist_ok=True)

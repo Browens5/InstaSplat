@@ -82,6 +82,8 @@ Without one of these, the splat looks right but is **not** metrically true.
 
 Rough local sweet spot: **short clips**, **2 fps or less**, **≤ ~200–400 training views** after cubemap expansion (remember: 1 equirect × 6 faces).
 
+For **long 8K@30** captures, use **tiled mode** (`--large-8k`): overlapping temporal chunks, gyro-adaptive sampling (≈6–15 fps), per-tile Brush on Metal, GPS/gyro Sim3 alignment, splat-transform merge. See `docs/LARGE_8K.md`.
+
 ## Product architecture recommendation
 
 ```

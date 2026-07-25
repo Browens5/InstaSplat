@@ -23,13 +23,27 @@ Studio equirect MP4 (+ sibling INSV / gyro+gps CSV)
 # 2) Keep the original .insv next to it (telemetry), or add gyro.csv / gps.csv
 
 instasplat doctor          # confirm mac_long_360=yes
+instasplat install-brush   # once — clones + cargo build --release
 instasplat mac-360 -i ./capture_equirect_8k.mp4 -o ./runs -n walk_360
+# GUI: Pause freezes stages + SIGSTOPs Brush; Resume / Stop also available
 
 # Resume-safe: re-run skips tiles that already have scene.ply
 instasplat mac-360 -i ./capture_equirect_8k.mp4 -o ./runs -n walk_360
 ```
 
 Aliases: `instasplat run --large-8k ...` and `instasplat run --tiled ...`.
+
+## Run sections individually
+
+```bash
+instasplat stages --mode tiled
+instasplat stage process_chunks -j ./runs/walk_360
+instasplat run --job ./runs/walk_360 --only align_chunks,merge_chunks
+instasplat run --job ./runs/walk_360 --from merge_chunks --to package
+instasplat validate --job ./runs/walk_360
+```
+
+GUI: multi-select **Stages** before Run (use “All for mode” to reset).
 
 ## Inputs that work best
 
@@ -46,7 +60,7 @@ Sidecar names next to the MP4: `gyro.csv`, `gps.csv`, or `<stem>.gyro.csv`.
 
 | Stage | Device |
 |-------|--------|
-| YOLO people masks | PyTorch **MPS** |
+| YOLO people masks | PyTorch **MPS** (auto CPU fallback on known MPS crashes) |
 | Cubemap remap | CPU OpenCV |
 | COLMAP | CPU (typical Homebrew) |
 | Brush train | **Metal / WebGPU** (serialized per tile) |

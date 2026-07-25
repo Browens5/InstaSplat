@@ -96,14 +96,24 @@ def _run_brush(
         cmd.append("--with-viewer")
     cmd.extend(cfg.train.extra_args)
     try:
-        run_cmd(cmd, log_file=log_dir / "brush.log", dry_run=cfg.dry_run)
+        run_cmd(
+            cmd,
+            log_file=log_dir / "brush.log",
+            dry_run=cfg.dry_run,
+            controllable=True,
+        )
     except RuntimeError as exc:
         log.warning("Primary Brush invocation failed (%s); trying alternate flags", exc)
         alt = [brush, "--export-path", str(export_dir), str(dataset)]
         if cfg.train.with_viewer:
             alt.append("--with-viewer")
         alt.extend(cfg.train.extra_args)
-        run_cmd(alt, log_file=log_dir / "brush_alt.log", dry_run=cfg.dry_run)
+        run_cmd(
+            alt,
+            log_file=log_dir / "brush_alt.log",
+            dry_run=cfg.dry_run,
+            controllable=True,
+        )
     return brush
 
 
@@ -130,15 +140,31 @@ def _run_opensplat(
         str(out_ply),
     ]
     cmd.extend(cfg.train.extra_args)
-    run_cmd(cmd, log_file=log_dir / "opensplat.log", dry_run=cfg.dry_run)
+    run_cmd(
+        cmd,
+        log_file=log_dir / "opensplat.log",
+        dry_run=cfg.dry_run,
+        controllable=True,
+    )
     log.info("OpenSplat training finished → %s", out_ply)
     return binary
 
 
 def run_train(cfg: PipelineConfig, paths: JobPaths, model_dir: Path) -> TrainResult:
+    from instasplat.utils.brush_install import ensure_brush
+    from instasplat.utils.control import get_controller
+
     paths.ensure()
     log = get_logger("instasplat.train", paths.logs / "train.log")
+    get_controller().checkpoint("train")
     backend = cfg.train.backend
+    if backend == "brush" and not cfg.dry_run:
+        installed = ensure_brush(auto_install=True)
+        if not installed.ok:
+            raise RuntimeError(installed.message)
+        if installed.brush_path:
+            cfg.train.brush_bin = str(installed.brush_path)
+        log.info("%s", installed.message)
     dataset = _prepare_colmap_dataset(paths, model_dir)
     export_dir = paths.brush_export
     export_dir.mkdir(parents=True, exist_ok=True)

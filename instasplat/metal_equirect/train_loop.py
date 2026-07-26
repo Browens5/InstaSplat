@@ -263,7 +263,7 @@ def train_equirect(
     composite: str = "oit",
     prefer_mps: bool = True,
     preview_every: int = 100,
-    live_max_points: int = 8_000,
+    live_max_points: int = 100_000,
     cache_views: bool = True,
     use_resolution_schedule: bool = True,
     on_progress: ProgressCallback | None = None,

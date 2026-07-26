@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QSplitter,
+    QStackedWidget,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -29,6 +30,8 @@ from instasplat.gui.geometry import (
     load_splat_ply,
 )
 from instasplat.gui.gl_view import create_point_cloud_widget
+from instasplat.gui.supersplat import viewer_version
+from instasplat.gui.supersplat.widget import SuperSplatViewerWidget
 from instasplat.utils.paths import JobPaths
 
 
@@ -88,15 +91,21 @@ class ViewerPanel(QWidget):
         root.addWidget(self.caption)
 
         tabs = QTabWidget()
-        # —— 3D tab ——
+        # —— 3D tab: sparse OpenGL points | SuperSplat Gaussian viewer ——
         view_page = QWidget()
         view_layout = QVBoxLayout(view_page)
         view_layout.setContentsMargins(0, 0, 0, 0)
+        self._view_stack = QStackedWidget()
         self.gl = create_point_cloud_widget()
-        view_layout.addWidget(self.gl, 1)
-        hint = QLabel("Drag to orbit · scroll/right-drag to zoom")
-        hint.setObjectName("tagline")
-        view_layout.addWidget(hint)
+        self.splat_view = SuperSplatViewerWidget()
+        self._view_stack.addWidget(self.gl)  # 0 = sparse / point-cloud fallback
+        self._view_stack.addWidget(self.splat_view)  # 1 = SuperSplat
+        view_layout.addWidget(self._view_stack, 1)
+        self._hint = QLabel(
+            f"Drag to orbit · scroll to zoom  ·  SuperSplat {viewer_version()}"
+        )
+        self._hint.setObjectName("tagline")
+        view_layout.addWidget(self._hint)
         tabs.addTab(view_page, "3D")
 
         # —— Artifacts tab ——
@@ -178,6 +187,13 @@ class ViewerPanel(QWidget):
     def stop_live(self) -> None:
         self._poll.stop()
 
+    def shutdown(self) -> None:
+        self.stop_live()
+        try:
+            self.splat_view.shutdown()
+        except Exception:  # noqa: BLE001
+            pass
+
     def on_stage_progress(self, stage: str, status: str) -> None:
         """Called from MainWindow on ProgressEvent — bias Auto mode."""
         if self.mode_combo.currentData() != "auto":
@@ -219,10 +235,6 @@ class ViewerPanel(QWidget):
             self.caption.setText("No job folder selected.")
             return
         mode = self._resolve_mode()
-        cloud: PointCloud | None = None
-        title = ""
-        mtime = -1.0
-        path_key = ""
         hb = self._read_train_heartbeat()
         hb_step = int(hb.get("step", -1)) if hb else -1
         # Force splat reload when training advances (live.ply every ~100 steps)
@@ -231,56 +243,91 @@ class ViewerPanel(QWidget):
             self._last_train_step = hb_step
 
         if mode == "sparse":
-            model = discover_colmap_model(self._job_root)
-            if model is not None:
-                pts = model / "points3D.bin"
-                if not pts.exists():
-                    pts = model / "points3D.txt"
-                mtime = pts.stat().st_mtime if pts.exists() else model.stat().st_mtime
-                path_key = f"sparse:{model}"
-                if force or path_key != self._last_loaded or mtime > self._last_mtime:
-                    cloud = load_colmap_sparse(model)
-                    try:
-                        rel = model.relative_to(self._job_root)
-                    except ValueError:
-                        rel = model
-                    title = f"COLMAP sparse — {rel}"
+            self._refresh_sparse(force=force)
         else:
-            ply = discover_splat_ply(self._job_root)
-            if ply is not None:
-                mtime = ply.stat().st_mtime
-                path_key = f"splat:{ply}"
-                if force or path_key != self._last_loaded or mtime > self._last_mtime:
-                    cloud = load_splat_ply(ply)
-                    try:
-                        rel = ply.relative_to(self._job_root)
-                    except ValueError:
-                        rel = ply
-                    title = f"Splat — {rel}"
-
-        if cloud is not None:
-            self.gl.set_cloud(cloud, title=f"{title} ({cloud.n:,} pts)")
-            cap = self.gl.status_text()
-            if hb and mode == "splat":
-                cap = (
-                    f"{cap}  ·  train step {hb.get('step')}/{hb.get('total_steps')}  "
-                    f"·  {hb.get('n_gaussians', '?')} gaussians  ·  SH {hb.get('sh_degree', '?')}"
-                )
-            self.caption.setText(cap)
-            self._last_loaded = path_key
-            self._last_mtime = mtime
-            self.status.emit(self.caption.text())
-        elif force:
-            waiting = (
-                "Waiting for COLMAP sparse model (after mapper)…"
-                if mode == "sparse"
-                else "Waiting for training live.ply (updates every ~100 steps)…"
-            )
-            self.gl.set_cloud(None, title=waiting)
-            self.caption.setText(waiting)
+            self._refresh_splat(force=force, hb=hb)
 
         if force:
             self.refresh_artifacts()
+
+    def _refresh_sparse(self, *, force: bool) -> None:
+        self._view_stack.setCurrentIndex(0)
+        self._hint.setText("Drag to orbit · scroll/right-drag to zoom  ·  COLMAP points")
+        model = discover_colmap_model(self._job_root) if self._job_root else None
+        if model is None:
+            if force:
+                self.gl.set_cloud(None, title="Waiting for COLMAP sparse model (after mapper)…")
+                self.caption.setText("Waiting for COLMAP sparse model (after mapper)…")
+            return
+        pts = model / "points3D.bin"
+        if not pts.exists():
+            pts = model / "points3D.txt"
+        mtime = pts.stat().st_mtime if pts.exists() else model.stat().st_mtime
+        path_key = f"sparse:{model}"
+        if not (force or path_key != self._last_loaded or mtime > self._last_mtime):
+            return
+        cloud = load_colmap_sparse(model)
+        try:
+            rel = model.relative_to(self._job_root)  # type: ignore[arg-type]
+        except ValueError:
+            rel = model
+        title = f"COLMAP sparse — {rel}"
+        self.gl.set_cloud(cloud, title=f"{title} ({cloud.n:,} pts)")
+        self.caption.setText(self.gl.status_text())
+        self._last_loaded = path_key
+        self._last_mtime = mtime
+        self.status.emit(self.caption.text())
+
+    def _refresh_splat(self, *, force: bool, hb: dict | None) -> None:
+        ply = discover_splat_ply(self._job_root) if self._job_root else None
+        if ply is None:
+            if force:
+                waiting = "Waiting for training live.ply (updates every ~100 steps)…"
+                if self.splat_view.available:
+                    self._view_stack.setCurrentIndex(1)
+                    self.splat_view.load_ply(None, title=waiting)
+                else:
+                    self._view_stack.setCurrentIndex(0)
+                    self.gl.set_cloud(None, title=waiting)
+                self.caption.setText(waiting)
+            return
+
+        mtime = ply.stat().st_mtime
+        path_key = f"splat:{ply}"
+        if not (force or path_key != self._last_loaded or mtime > self._last_mtime):
+            return
+
+        try:
+            rel = ply.relative_to(self._job_root)  # type: ignore[arg-type]
+        except ValueError:
+            rel = ply
+        title = f"Splat — {rel}"
+        if hb:
+            title = (
+                f"{title}  ·  step {hb.get('step')}/{hb.get('total_steps')}  "
+                f"·  {hb.get('n_gaussians', '?')} gaussians  ·  SH {hb.get('sh_degree', '?')}"
+            )
+
+        if self.splat_view.available:
+            self._view_stack.setCurrentIndex(1)
+            self._hint.setText(
+                f"Drag to orbit · scroll to zoom  ·  SuperSplat {viewer_version()} (true Gaussian splats)"
+            )
+            self.splat_view.load_ply(ply, title=title)
+            self.caption.setText(title)
+        else:
+            # Fallback: colored Gaussian centers in the OpenGL point viewer
+            self._view_stack.setCurrentIndex(0)
+            self._hint.setText(
+                "Drag to orbit · scroll/right-drag to zoom  ·  point-cloud fallback"
+            )
+            cloud = load_splat_ply(ply)
+            self.gl.set_cloud(cloud, title=f"{title} ({cloud.n:,} pts)")
+            self.caption.setText(self.gl.status_text())
+
+        self._last_loaded = path_key
+        self._last_mtime = mtime
+        self.status.emit(self.caption.text())
 
     def refresh_artifacts(self) -> None:
         self.artifact_list.clear()
@@ -388,19 +435,28 @@ class ViewerPanel(QWidget):
         path = self._selected_path()
         if path is None or not path.exists():
             return
-        cloud = None
-        title = path.name
         if path.name.startswith("points3D") or path.parent.name in {"0", "0_txt"}:
             model = path.parent
             cloud = load_colmap_sparse(model)
             title = f"COLMAP — {model.name}"
-        elif path.suffix.lower() == ".ply":
-            cloud = load_splat_ply(path)
-            title = f"Splat — {path.name}"
-        if cloud is None:
-            self.caption.setText(f"Cannot preview {path.name} in 3D")
+            self._view_stack.setCurrentIndex(0)
+            self.gl.set_cloud(cloud, title=f"{title} ({cloud.n:,} pts)")
+            self.caption.setText(self.gl.status_text())
+            self._tabs.setCurrentIndex(0)
+            self.status.emit(self.caption.text())
             return
-        self.gl.set_cloud(cloud, title=f"{title} ({cloud.n:,} pts)")
-        self.caption.setText(self.gl.status_text())
-        self._tabs.setCurrentIndex(0)
-        self.status.emit(self.caption.text())
+        if path.suffix.lower() == ".ply":
+            title = f"Splat — {path.name}"
+            if self.splat_view.available:
+                self._view_stack.setCurrentIndex(1)
+                self.splat_view.load_ply(path, title=title)
+                self.caption.setText(title)
+            else:
+                cloud = load_splat_ply(path)
+                self._view_stack.setCurrentIndex(0)
+                self.gl.set_cloud(cloud, title=f"{title} ({cloud.n:,} pts)")
+                self.caption.setText(self.gl.status_text())
+            self._tabs.setCurrentIndex(0)
+            self.status.emit(self.caption.text())
+            return
+        self.caption.setText(f"Cannot preview {path.name} in 3D")

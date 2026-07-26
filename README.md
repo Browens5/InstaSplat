@@ -160,7 +160,7 @@ GUI: **Open previous run…** → select stages → **Continue run**.
 
 - Metal-first defaults for the long-360 pipeline  
 - Pause / Resume / Stop at stage checkpoints  
-- Live COLMAP / splat viewer + artifact browser  
+- Live COLMAP point preview + **SuperSplat** Gaussian splat viewer + artifact browser
 - Multi-select stages; continue previous jobs  
 
 ---

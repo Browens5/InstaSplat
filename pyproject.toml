@@ -43,9 +43,13 @@ instasplat = "instasplat.cli:app"
 [tool.hatch.build.targets.wheel]
 packages = ["instasplat"]
 
-# Ship Metal shader sources with the wheel
+# Ship Metal shaders + vendored SuperSplat viewer assets with the wheel
 [tool.hatch.build.targets.wheel.force-include]
 "instasplat/metal_equirect/metal" = "instasplat/metal_equirect/metal"
+"instasplat/gui/supersplat/assets" = "instasplat/gui/supersplat/assets"
+"instasplat/gui/supersplat/settings.json" = "instasplat/gui/supersplat/settings.json"
+"instasplat/gui/supersplat/LICENSE" = "instasplat/gui/supersplat/LICENSE"
+"instasplat/gui/supersplat/VERSION" = "instasplat/gui/supersplat/VERSION"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -183,8 +183,10 @@ class TrainConfig:
     densify_every: int = 100
     # Cap on Gaussian count per job/tile (init + densify); GUI up to 30M
     max_gaussians: int = 40_000
-    # Async subsampled live.ply for the GUI viewer (steps)
+    # Async subsampled live.ply for the GUI SuperSplat viewer (steps)
     viewer_every: int = 100
+    # Max Gaussians written into live.ply for the embedded SuperSplat viewer
+    live_max_points: int = 100_000
     # Periodic opacity reset (3DGS-style); 0 disables
     opacity_reset_every: int = 3_000
 
@@ -446,7 +448,8 @@ train:
   export_every: 500         # incremental PLY every N steps (50–1000 typical)
   sh_degree: 1              # 0–3 spherical harmonics
   max_gaussians: 40000      # per tile/job; GUI allows up to 30000000 (30M)
-  viewer_every: 100         # async subsampled live.ply for GUI viewer
+  viewer_every: 100         # async subsampled live.ply for SuperSplat GUI viewer
+  live_max_points: 100000   # Gaussians in live.ply (opacity top-k)
   lr: 0.01
   with_eval3d: true
   composite: metal          # metal (fused) | oit (torch) | tile

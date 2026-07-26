@@ -648,7 +648,7 @@ class MainWindow(QMainWindow):
 
         note = QLabel(
             "Open a previous run to continue. Viewer: COLMAP sparse during SfM, "
-            "then subsampled live.ply every ~100 train steps. Pause freezes; Stop terminates."
+            "then SuperSplat live.ply every ~100 train steps. Pause freezes; Stop terminates."
         )
         note.setWordWrap(True)
         note.setObjectName("tagline")
@@ -1211,6 +1211,15 @@ class MainWindow(QMainWindow):
 
 
 def launch() -> None:
+    # Required before QApplication when embedding QWebEngineView + OpenGL widgets
+    from PySide6.QtCore import Qt as _Qt
+
+    from PySide6.QtWidgets import QApplication as _QApp
+
+    try:
+        _QApp.setAttribute(_Qt.AA_ShareOpenGLContexts, True)
+    except Exception:  # noqa: BLE001
+        pass
     configure_default_surface_format()
     app = QApplication(sys.argv)
     app.setApplicationName("InstaSplat")
@@ -1222,7 +1231,12 @@ def launch() -> None:
     app.setStyleSheet(STYLE)
     win = MainWindow()
     win.show()
-    sys.exit(app.exec())
+    code = app.exec()
+    try:
+        win.viewer.shutdown()
+    except Exception:  # noqa: BLE001
+        pass
+    sys.exit(code)
 
 
 if __name__ == "__main__":

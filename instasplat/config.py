@@ -178,13 +178,13 @@ class TrainConfig:
     sh_degree: int = 1
     lr: float = 0.01
     with_eval3d: bool = True
-    composite: str = "tile"  # tile | oit
+    composite: str = "oit"  # oit (fast vectorized) | tile
     sh_warmup_steps: int = 500
     densify_every: int = 200
     # Cap on Gaussian count (init + densify)
     max_gaussians: int = 40_000
-    # Overwrite live.ply for the GUI viewer (steps)
-    viewer_every: int = 25
+    # Async subsampled live.ply for the GUI viewer (steps)
+    viewer_every: int = 100
 
 
 @dataclass
@@ -285,7 +285,8 @@ class PipelineConfig:
         self.train.total_steps = 15_000
         self.train.export_every = 500
         self.train.max_gaussians = 40_000
-        self.train.viewer_every = 25
+        self.train.viewer_every = 100
+        self.train.composite = "oit"
         self.train.backend = "metal_equirect"
         self.export.formats = ["ply", "sog", "spz"]
         self.export.min_opacity = 0.05
@@ -443,10 +444,10 @@ train:
   export_every: 500         # incremental PLY every N steps (50–1000 typical)
   sh_degree: 1              # 0–3 spherical harmonics
   max_gaussians: 40000
-  viewer_every: 25          # overwrite live.ply for GUI viewer
+  viewer_every: 100         # async subsampled live.ply for GUI viewer
   lr: 0.01
   with_eval3d: true
-  composite: tile           # tile (sorted) | oit (faster)
+  composite: oit            # oit (fast vectorized) | tile
   sh_warmup_steps: 500
   densify_every: 200
 
@@ -522,9 +523,9 @@ train:
   export_every: 500
   sh_degree: 1
   max_gaussians: 40000
-  viewer_every: 25
+  viewer_every: 100
   with_eval3d: true
-  composite: tile
+  composite: oit
 
 export:
   formats: [ply, sog, spz]

@@ -191,6 +191,7 @@ def test_train_smoke_exports_ply_and_preview(tmp_path: Path) -> None:
         export_dir,
         total_steps=3,
         export_every=3,
+        viewer_every=1,
         sh_degree=1,
         sh_warmup_steps=2,
         lr=0.05,
@@ -201,6 +202,7 @@ def test_train_smoke_exports_ply_and_preview(tmp_path: Path) -> None:
         composite="oit",
         prefer_mps=False,
         preview_every=1,
+        use_resolution_schedule=True,
         on_progress=events.append,
         log=None,
     )
@@ -208,6 +210,8 @@ def test_train_smoke_exports_ply_and_preview(tmp_path: Path) -> None:
     assert stats.preview_path is not None and stats.preview_path.exists()
     assert events and events[-1]["step"] == 3
     assert (export_dir / "previews").is_dir()
+    assert (export_dir / "live.ply").exists()
+    assert events[-1].get("phase") in {"coarse", "mid", "fine", "full"}
 
 
 def test_densify_clone_split_prune() -> None:
@@ -347,4 +351,88 @@ def test_export_ply_roundtrip(tmp_path: Path) -> None:
 def test_metal_status_dict() -> None:
     st = metal_status()
     assert "active_backend" in st
-    assert st["active_backend"] == "torch_ut"
+    assert st["active_backend"] in {"torch_oit", "metal_oit"}
+    assert "dispatch" in st
+
+
+def test_schedule_coarse_to_fine() -> None:
+    from instasplat.metal_equirect.schedule import schedule_at_step
+
+    early = schedule_at_step(1, 1000)
+    mid = schedule_at_step(500, 1000)
+    late = schedule_at_step(900, 1000)
+    assert early.phase == "coarse" and early.width_scale == 0.5 and early.tile_size == 64
+    assert mid.phase == "mid" and mid.width_scale == 0.75
+    assert late.phase == "fine" and late.width_scale == 1.0 and late.tile_size == 16
+    assert early.max_per_tile >= late.max_per_tile
+
+
+def test_view_cache_decode_once(tmp_path: Path, monkeypatch) -> None:
+    from instasplat.metal_equirect.dataset import TrainView
+    from instasplat.metal_equirect.view_cache import ViewCache
+
+    img_path = tmp_path / "p.jpg"
+    import cv2
+
+    cv2.imwrite(str(img_path), np.zeros((16, 32, 3), dtype=np.uint8) + 50)
+    view = TrainView(
+        name="p",
+        image_path=img_path,
+        width=32,
+        height=16,
+        R_w2c=np.eye(3, dtype=np.float32),
+        t_w2c=np.zeros(3, dtype=np.float32),
+        mask_path=None,
+    )
+    calls = {"n": 0}
+    real_imread = cv2.imread
+
+    def counted_imread(*args, **kwargs):
+        calls["n"] += 1
+        return real_imread(*args, **kwargs)
+
+    monkeypatch.setattr(cv2, "imread", counted_imread)
+    cache = ViewCache(torch.device("cpu"), max_views=8)
+    cache.get(view)
+    cache.get(view)
+    rgb, mask, R, t, w, h = cache.get_scaled(view, width_scale=0.5)
+    assert calls["n"] == 1
+    assert w == 16 and h == 8
+    assert rgb.shape == (h, w, 3)
+
+
+def test_export_ply_subsampled(tmp_path: Path) -> None:
+    xyz = np.random.randn(40, 3).astype(np.float32)
+    rgb = np.random.rand(40, 3).astype(np.float32)
+    model = gaussians_from_points(xyz, rgb, sh_degree=0, max_points=40, device=torch.device("cpu"))
+    path = export_ply(model, tmp_path / "sub.ply", max_points=10)
+    text = path.read_bytes().split(b"end_header")[0].decode("ascii")
+    assert "element vertex 10" in text
+
+
+def test_oit_no_item_sync_in_forward() -> None:
+    """Vectorized OIT must not call .item() on GPU tensors in the hot path."""
+    cam = EquirectCamera(32, 16)
+    n = 20
+    means = (torch.randn(n, 3) * 0.2 + torch.tensor([0.0, 0.0, 2.0])).requires_grad_(True)
+    quats = torch.zeros(n, 4)
+    quats[:, 0] = 1.0
+    pred = rasterize_equirect(
+        means,
+        quats,
+        torch.full((n, 3), 0.05),
+        torch.full((n,), 0.4),
+        torch.zeros(n, 3),
+        torch.zeros(n, 0),
+        torch.eye(3),
+        torch.zeros(3),
+        cam,
+        sh_degree=0,
+        max_gaussians=n,
+        with_eval3d=False,
+        composite="oit",
+        prefer_metal=False,
+    )
+    assert pred.shape == (16, 32, 3)
+    pred.mean().backward()
+    assert means.grad is not None

@@ -179,15 +179,38 @@ def gaussians_from_points(
     )
 
 
-def export_ply(model: GaussianModel, path: Path) -> Path:
-    """Write a Gaussian PLY readable by splat-transform / InstaSplat viewers."""
+def export_ply(
+    model: GaussianModel,
+    path: Path,
+    *,
+    max_points: int | None = None,
+) -> Path:
+    """
+    Write a Gaussian PLY readable by splat-transform / InstaSplat viewers.
+
+    When ``max_points`` is set and the model is larger, keep the highest-opacity
+    Gaussians (fast live-viewer preview without dumping the full cloud).
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    means = model.means.detach().cpu().numpy()
-    scales = model.get_scales().detach().cpu().numpy()
-    quats = model.get_quats().detach().cpu().numpy()
-    opacity = model.opacities.detach().cpu().numpy()  # logit space like 3DGS
-    f_dc = model.f_dc.detach().cpu().numpy()
+    n_full = model.n
+    idx = None
+    if max_points is not None and n_full > int(max_points):
+        score = model.get_opacity().detach()
+        idx = torch.topk(score, int(max_points)).indices
+    means = model.means.detach()
+    scales = model.get_scales().detach()
+    quats = model.get_quats().detach()
+    opacity = model.opacities.detach()  # logit space like 3DGS
+    f_dc = model.f_dc.detach()
+    if idx is not None:
+        means, scales, quats = means[idx], scales[idx], quats[idx]
+        opacity, f_dc = opacity[idx], f_dc[idx]
+    means = means.cpu().numpy()
+    scales = scales.cpu().numpy()
+    quats = quats.cpu().numpy()
+    opacity = opacity.cpu().numpy()
+    f_dc = f_dc.cpu().numpy()
     n = means.shape[0]
     # Standard 3DGS / Brush-ish properties
     props = [

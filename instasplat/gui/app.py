@@ -552,7 +552,7 @@ class MainWindow(QMainWindow):
         train_box = QGroupBox("Training")
         train_form = QFormLayout(train_box)
         train_form.setSpacing(8)
-        train_note = QLabel("metal_equirect · live viewer refreshes every 25 steps")
+        train_note = QLabel("metal_equirect · live viewer refreshes every ~100 steps (subsampled)")
         train_note.setObjectName("tagline")
         train_form.addRow(train_note)
         self.steps = QSpinBox()
@@ -640,7 +640,7 @@ class MainWindow(QMainWindow):
 
         note = QLabel(
             "Open a previous run to continue. Viewer: COLMAP sparse during SfM, "
-            "then live.ply every 25 train steps. Pause freezes; Stop terminates."
+            "then subsampled live.ply every ~100 train steps. Pause freezes; Stop terminates."
         )
         note.setWordWrap(True)
         note.setObjectName("tagline")
@@ -1028,7 +1028,7 @@ class MainWindow(QMainWindow):
         cfg.train.max_gaussians = int(self.max_gaussians.value())
         cfg.train.sh_degree = int(self.sh_degree.value())
         cfg.train.export_every = int(self.export_every.value())
-        cfg.train.viewer_every = 25
+        cfg.train.viewer_every = 100
         cfg.export.formats = formats  # type: ignore[assignment]
         return cfg
 

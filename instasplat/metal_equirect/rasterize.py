@@ -160,29 +160,28 @@ def rasterize_equirect(
     with_eval3d: bool = False,
     composite: str = "oit",  # metal | oit | tile
     prefer_metal: bool = True,
-) -> torch.Tensor:
+    return_info: bool = False,
+) -> torch.Tensor | tuple[torch.Tensor, dict]:
     """
     Soft-alpha composite of Gaussians into an equirect RGB image (H, W, 3).
 
-    - ``metal`` — fused soft-OIT when Metal dispatch is live (torch backward);
-      otherwise same as vectorized ``oit`` (never the slow Python CPU-ref)
-    - ``oit`` — vectorized torch soft-OIT; upgrades to Metal when
-      ``prefer_metal`` and metallib/PyObjC dispatch is available
-    - ``tile`` — tiled soft-OIT with per-tile top-K
+    When ``return_info=True``, also returns a dict with ``mean_2d`` (for AbsGS
+    densify) and ``selected`` (indices into the full Gaussian set, or None).
     """
     if R_w2c.device != means.device or R_w2c.dtype != means.dtype:
         R_w2c = R_w2c.to(device=means.device, dtype=means.dtype)
     if t_w2c.device != means.device or t_w2c.dtype != means.dtype:
         t_w2c = t_w2c.to(device=means.device, dtype=means.dtype)
 
+    selected: torch.Tensor | None = None
     n = means.shape[0]
     if max_gaussians is not None and n > max_gaussians:
         score = opacities.detach() * scales.detach().mean(dim=-1)
-        idx = torch.topk(score, max_gaussians).indices
-        means, quats, scales = means[idx], quats[idx], scales[idx]
-        opacities, f_dc = opacities[idx], f_dc[idx]
+        selected = torch.topk(score, max_gaussians).indices
+        means, quats, scales = means[selected], quats[selected], scales[selected]
+        opacities, f_dc = opacities[selected], f_dc[selected]
         if f_rest.numel() > 0:
-            f_rest = f_rest[idx]
+            f_rest = f_rest[selected]
         n = max_gaussians
 
     means_cam = means @ R_w2c.transpose(0, 1) + t_w2c
@@ -199,12 +198,9 @@ def rasterize_equirect(
     if with_eval3d:
         opac = (opac * _eval3d_response(means_cam, cov_cam, opacities)).clamp(0, 0.99)
 
-    # Fused Metal only when dispatch is live (or tests force CPU-ref).
-    # Never silently fall back to the slow Python soft_oit_ref in training.
+    image: torch.Tensor | None = None
     use_fused = False
-    if composite in {"metal", "oit"} and (
-        composite == "metal" or prefer_metal
-    ):
+    if composite in {"metal", "oit"} and (composite == "metal" or prefer_metal):
         try:
             from instasplat.metal_equirect.metal_runtime import (
                 force_reference_enabled,
@@ -214,7 +210,7 @@ def rasterize_equirect(
 
             use_fused = metal_raster_available() or force_reference_enabled()
             if use_fused:
-                return fused_soft_oit(
+                image = fused_soft_oit(
                     mean_2d,
                     cov_2d,
                     radius,
@@ -228,23 +224,28 @@ def rasterize_equirect(
         except Exception:
             use_fused = False
 
-    if composite == "tile":
-        return _composite_tiled(
-            mean_2d,
-            cov_2d,
-            radius,
-            opac,
-            colors,
-            depth,
-            valid,
-            camera,
-            tile_size=tile_size,
-            max_per_tile=max_per_tile,
-        )
-    # metal-without-dispatch and oit both use vectorized torch OIT
-    return _composite_oit_batched(
-        mean_2d, cov_2d, radius, opac, colors, depth, valid, camera
-    )
+    if image is None:
+        if composite == "tile":
+            image = _composite_tiled(
+                mean_2d,
+                cov_2d,
+                radius,
+                opac,
+                colors,
+                depth,
+                valid,
+                camera,
+                tile_size=tile_size,
+                max_per_tile=max_per_tile,
+            )
+        else:
+            image = _composite_oit_batched(
+                mean_2d, cov_2d, radius, opac, colors, depth, valid, camera
+            )
+
+    if return_info:
+        return image, {"mean_2d": mean_2d, "selected": selected, "radius": radius}
+    return image
 
 
 def _composite_oit_batched(

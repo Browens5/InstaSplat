@@ -215,23 +215,191 @@ def test_train_smoke_exports_ply_and_preview(tmp_path: Path) -> None:
 
 
 def test_densify_clone_split_prune() -> None:
+    from instasplat.metal_equirect.optim_utils import build_optimizers
+
     xyz = np.random.randn(40, 3).astype(np.float32)
     rgb = np.random.rand(40, 3).astype(np.float32)
     model = gaussians_from_points(xyz, rgb, sh_degree=1, max_points=40, device=torch.device("cpu"))
+    opt = build_optimizers(model, lr=0.01)
     state = DensifyState()
     state.reset(model.n, model.means.device)
-    # Fake grads so densify triggers
+    # Fake 3D grads (fallback path) so densify triggers
     model.means.grad = torch.ones_like(model.means) * 0.01
+    state.accumulate(model)
+    n0 = model.n
+    # Capture Adam moment before densify
+    means_p = model.means
+    opt["means"].state[means_p] = {
+        "step": torch.tensor(5),
+        "exp_avg": torch.ones_like(means_p) * 0.1,
+        "exp_avg_sq": torch.ones_like(means_p) * 0.01,
+    }
+    stats = densify_and_prune(
+        model,
+        state,
+        opt,
+        grad_threshold=0.001,
+        max_gaussians=200,
+        clone_scale_frac=0.05,
+        phase="balanced",
+    )
+    assert model.n >= 1
+    assert isinstance(stats["cloned"], int)
+    # Optimizer still tracks the (possibly new) means parameter
+    assert model.means in opt["means"].param_groups[0]["params"]
+    assert model.means in opt["means"].state
+    # Moments preserved for surviving rows when we only cloned (appended zeros)
+    st = opt["means"].state[model.means]
+    assert "exp_avg" in st
+    if stats["cloned"] and not stats["split"] and not stats["pruned"]:
+        assert st["exp_avg"].shape[0] == model.n
+        assert torch.allclose(st["exp_avg"][:n0], torch.ones(n0, 3) * 0.1)
+
+
+def test_densify_phase_within_window() -> None:
+    from instasplat.metal_equirect.densify import densify_phase, grad_threshold_at
+
+    densify_from, densify_until = 100, 9000
+    assert densify_phase(200, densify_from, densify_until) == "split"
+    assert densify_phase(4000, densify_from, densify_until) == "balanced"
+    assert densify_phase(8500, densify_from, densify_until) == "clone"
+    thr_early = grad_threshold_at(200, densify_from, densify_until)
+    thr_late = grad_threshold_at(8500, densify_from, densify_until)
+    assert thr_late > thr_early
+
+
+def test_densify_prunes_transparent_before_grow() -> None:
+    """Near-dead Gaussians are culled; densify does not inflate transparent mass."""
+    from instasplat.metal_equirect.optim_utils import build_optimizers
+
+    xyz = np.random.randn(20, 3).astype(np.float32) * 0.01
+    rgb = np.random.rand(20, 3).astype(np.float32)
+    model = gaussians_from_points(xyz, rgb, sh_degree=0, max_points=20, device=torch.device("cpu"))
+    # Make almost all transparent
+    with torch.no_grad():
+        model.opacities.data.fill_(-10.0)  # sigmoid ≈ 0
+        model.opacities.data[0] = 2.0  # one alive
+    opt = build_optimizers(model, lr=0.01)
+    state = DensifyState()
+    state.reset(model.n, model.means.device)
+    model.means.grad = torch.ones_like(model.means) * 1.0
     state.accumulate(model)
     stats = densify_and_prune(
         model,
         state,
+        opt,
         grad_threshold=0.001,
+        min_opacity=0.005,
         max_gaussians=200,
-        clone_scale_frac=0.05,
+        phase="split",
     )
+    assert stats["pruned"] >= 19
     assert model.n >= 1
-    assert isinstance(stats["cloned"], int)
+    assert float(model.get_opacity().min()) > 0.005 or model.n == 1
+
+
+def test_densify_respects_max_gaussians_room() -> None:
+    from instasplat.metal_equirect.optim_utils import build_optimizers
+
+    xyz = np.random.randn(10, 3).astype(np.float32)
+    rgb = np.random.rand(10, 3).astype(np.float32)
+    model = gaussians_from_points(xyz, rgb, sh_degree=0, max_points=10, device=torch.device("cpu"))
+    opt = build_optimizers(model, lr=0.01)
+    state = DensifyState()
+    state.reset(model.n, model.means.device)
+    model.means.grad = torch.ones_like(model.means)
+    state.accumulate(model)
+    densify_and_prune(
+        model,
+        state,
+        opt,
+        grad_threshold=0.0,
+        max_gaussians=12,
+        clone_scale_frac=1.0,  # favor clones via large relative scale
+        scene_extent=1.0,
+        phase="clone",
+    )
+    assert model.n <= 12
+
+
+def test_opacity_reset_clears_adam() -> None:
+    from instasplat.metal_equirect.densify import opacity_reset
+    from instasplat.metal_equirect.optim_utils import build_optimizers
+
+    xyz = np.random.randn(8, 3).astype(np.float32)
+    rgb = np.random.rand(8, 3).astype(np.float32)
+    model = gaussians_from_points(xyz, rgb, sh_degree=0, max_points=8, device=torch.device("cpu"))
+    opt = build_optimizers(model, lr=0.01)
+    old_p = model.opacities
+    opt["opacities"].state[old_p] = {
+        "step": torch.tensor(3),
+        "exp_avg": torch.ones_like(old_p),
+        "exp_avg_sq": torch.ones_like(old_p),
+    }
+    opacity_reset(model, opt, value=0.01)
+    assert old_p not in opt["opacities"].state
+    assert model.opacities in opt["opacities"].param_groups[0]["params"]
+    assert torch.allclose(torch.sigmoid(model.opacities.data), torch.full((8,), 0.01), atol=1e-3)
+
+
+def test_densify_absgrad_2d_path() -> None:
+    cam = EquirectCamera(32, 16)
+    n = 10
+    means = (torch.randn(n, 3) * 0.2 + torch.tensor([0.0, 0.0, 2.0])).requires_grad_(True)
+    quats = torch.zeros(n, 4)
+    quats[:, 0] = 1.0
+    pred, info = rasterize_equirect(
+        means,
+        quats,
+        torch.full((n, 3), 0.05),
+        torch.full((n,), 0.5),
+        torch.zeros(n, 3),
+        torch.zeros(n, 0),
+        torch.eye(3),
+        torch.zeros(3),
+        cam,
+        sh_degree=0,
+        max_gaussians=n,
+        with_eval3d=False,
+        composite="oit",
+        prefer_metal=False,
+        return_info=True,
+    )
+    info["mean_2d"].retain_grad()
+    pred.mean().backward()
+    model = gaussians_from_points(
+        means.detach().numpy(),
+        np.random.rand(n, 3).astype(np.float32),
+        sh_degree=0,
+        max_points=n,
+        device=torch.device("cpu"),
+    )
+    # Attach matching means for accumulate API
+    model.means = torch.nn.Parameter(means.detach().clone())
+    state = DensifyState()
+    state.reset(model.n, model.means.device)
+    state.accumulate(model, mean_2d=info["mean_2d"], selected=None)
+    g = state.mean_grad()
+    assert g.shape == (n,)
+    assert torch.isfinite(g).all()
+
+
+def test_rust_densify_select_optional() -> None:
+    """Rust helper if built; otherwise Python path still returns tensors."""
+    grads = torch.rand(50)
+    scales = torch.rand(50) * 0.05
+    from instasplat.metal_equirect.densify import _select_clone_split_indices
+
+    c, s = _select_clone_split_indices(
+        grads, scales, grad_threshold=0.2, clone_scale=0.02, phase="balanced", room=20
+    )
+    assert c.dtype == torch.long and s.dtype == torch.long
+    try:
+        import instasplat_densify
+
+        assert hasattr(instasplat_densify, "select_clone_split")
+    except ImportError:
+        pass
 
 
 def test_read_images_bin_roundtrip(tmp_path: Path) -> None:

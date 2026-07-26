@@ -86,13 +86,25 @@ train:
   with_eval3d: true
   composite: metal         # metal (fused forward) | oit (torch) | tile
   sh_warmup_steps: 500
-  densify_every: 200
+  densify_every: 100
+  opacity_reset_every: 3000
 ```
 
 GUI **Training** group exposes steps and max Gaussians in **thousands**
 (`1 k = 1,000`; steps up to `1,000 k` = 1M; max Gaussians up to `30,000 k` = 30M
 per tile/job), plus SH degree and PLY export interval. The live viewer reloads a
 **subsampled** `live.ply` every `viewer_every` steps (default 100, written asynchronously).
+
+### Densification (AbsGS / gsplat-style)
+
+- **2D absgrad** — accumulate `|∇ mean_2d|` from the rasterizer (fallback: 3D means.grad)
+- **Adam-preserving** prune/clone/split — moments are sliced/zero-padded, not rebuilt
+- **Phased global→local** over the densify window (`densify_from` → 60% of steps):
+  split-heavy early → balanced → clone-heavy late; ascending grad threshold
+- **Opacity reset** every `opacity_reset_every` (default 3000)
+- Clone vs split uses `clone_scale_frac * scene_extent` (3DGS-style percent_dense)
+- Optional Rust index helper for ≤100k Gaussians: `native/instasplat_densify`
+  (`maturin develop --release`); larger sets stay on-device in PyTorch
 
 ### Speed path (Mac)
 

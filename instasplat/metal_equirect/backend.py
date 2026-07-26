@@ -127,6 +127,7 @@ def run_metal_equirect_train(
         prefer_mps=bool(cfg.metal.prefer_metal),
         opacity_reset_every=int(getattr(cfg.train, "opacity_reset_every", 3000)),
         live_max_points=live_max_points,
+        use_resolution_schedule=bool(getattr(cfg.train, "resolution_schedule", False)),
         on_progress=_progress,
         log=log,
     )

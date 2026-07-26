@@ -20,7 +20,14 @@ Kernels:
 | `soft_oit_accumulate` | Per-Gaussian footprint soft splat (atomic RGB/weight) |
 | `soft_oit_normalize` | `rgb = color / (weight + ε)` |
 
-Dispatch (optional): `metal_runtime.metal_fused_oit_ste` loads the metallib via
-PyObjC when available and uses a straight-through estimator so PyTorch grads
-still flow through the vectorized torch OIT path. Without PyObjC / metallib,
-training uses the vectorized PyTorch OIT (MPS/CPU) only — CI and Linux stay green.
+## Composite path (`composite: metal`)
+
+`metal_runtime.fused_soft_oit` is the training composite entry:
+
+1. **Forward** — Metal soft-OIT when PyObjC + metallib load; else CPU reference
+   (`soft_oit_ref.py`) that mirrors the kernel.
+2. **Backward** — recompute vectorized torch OIT so grads flow to means / SH / etc.
+
+Inference / `torch.no_grad()` still uses the fused forward only (no torch composite).
+
+Set `train.composite: metal` (Mac defaults) or keep `oit` / `tile` for pure torch.

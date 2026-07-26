@@ -288,7 +288,7 @@ def train_equirect(
     max_gaussians = max(1_000, int(max_init_points))
     export_every = max(0, int(export_every))
     viewer_every = max(0, int(viewer_every))
-    composite = composite if composite in {"tile", "oit"} else "oit"
+    composite = composite if composite in {"tile", "oit", "metal"} else "oit"
 
     model = _build_model(
         dataset,

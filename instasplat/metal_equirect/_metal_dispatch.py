@@ -81,7 +81,7 @@ class MetalPipeline:
         # pack cov as (a, b, c, 0)
         cov_pack = np.zeros((n, 4), dtype=np.float32)
         cov_pack[:, 0] = cov_2d[:, 0, 0]
-        cov_pack[:, 1] = cov_2d[:, 0, 1]
+        cov_pack[:, 1] = 0.5 * (cov_2d[:, 0, 1] + cov_2d[:, 1, 0])
         cov_pack[:, 2] = cov_2d[:, 1, 1]
         radius = np.ascontiguousarray(radius, dtype=np.float32)
         opacities = np.ascontiguousarray(opacities, dtype=np.float32)

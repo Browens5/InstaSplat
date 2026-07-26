@@ -65,10 +65,10 @@ def run_metal_equirect_train(
     max_gaussians = max(1_000, int(getattr(cfg.train, "max_gaussians", 40_000)))
     export_every = max(50, min(int(cfg.train.export_every), 10_000))
     viewer_every = max(1, int(getattr(cfg.train, "viewer_every", 100)))
-    composite = str(cfg.train.composite or "oit")
-    if composite not in {"tile", "oit"}:
-        log.warning("Unknown composite=%s; using oit", composite)
-        composite = "oit"
+    composite = str(cfg.train.composite or "metal")
+    if composite not in {"tile", "oit", "metal"}:
+        log.warning("Unknown composite=%s; using metal", composite)
+        composite = "metal"
     if steps > 50_000:
         log.warning("total_steps=%d is high for metal_equirect; consider 10k–20k", steps)
 

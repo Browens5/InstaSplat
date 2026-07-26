@@ -351,8 +351,99 @@ def test_export_ply_roundtrip(tmp_path: Path) -> None:
 def test_metal_status_dict() -> None:
     st = metal_status()
     assert "active_backend" in st
-    assert st["active_backend"] in {"torch_oit", "metal_oit"}
+    assert st["active_backend"] in {"torch_oit", "metal_oit", "ref_oit"}
+    assert st.get("fused_composite") is True
     assert "dispatch" in st
+
+
+def test_fused_metal_composite_forward_and_backward() -> None:
+    """composite=metal uses fused path (CPU ref on Linux) with torch grads."""
+    from instasplat.metal_equirect.metal_runtime import (
+        active_composite_backend,
+        set_force_reference,
+    )
+
+    set_force_reference(True)
+    try:
+        cam = EquirectCamera(32, 16)
+        n = 8
+        means = (torch.randn(n, 3) * 0.2 + torch.tensor([0.0, 0.0, 2.0])).requires_grad_(
+            True
+        )
+        quats = torch.zeros(n, 4)
+        quats[:, 0] = 1.0
+        pred = rasterize_equirect(
+            means,
+            quats,
+            torch.full((n, 3), 0.05),
+            torch.full((n,), 0.5),
+            torch.zeros(n, 3),
+            torch.zeros(n, 0),
+            torch.eye(3),
+            torch.zeros(3),
+            cam,
+            sh_degree=0,
+            max_gaussians=n,
+            with_eval3d=False,
+            composite="metal",
+            prefer_metal=True,
+        )
+        assert pred.shape == (16, 32, 3)
+        assert torch.isfinite(pred).all()
+        assert active_composite_backend() == "ref_oit"
+        loss = photometric_loss(pred, torch.zeros_like(pred), cam)
+        loss.backward()
+        assert means.grad is not None
+        assert torch.isfinite(means.grad).all()
+    finally:
+        set_force_reference(False)
+
+
+def test_soft_oit_reference_matches_torch_oit_roughly() -> None:
+    """CPU reference and torch OIT should be in the same ballpark on simple scenes."""
+    from instasplat.metal_equirect.cameras import (
+        build_covariance,
+        rotate_covariances,
+        unscented_equirect_project,
+    )
+    from instasplat.metal_equirect.rasterize import (
+        _composite_oit_batched,
+        _radii_from_cov2d,
+    )
+    from instasplat.metal_equirect.soft_oit_ref import soft_oit_reference
+
+    torch.manual_seed(1)
+    cam = EquirectCamera(24, 12)
+    n = 5
+    means = torch.randn(n, 3) * 0.15 + torch.tensor([0.0, 0.0, 2.0])
+    quats = torch.zeros(n, 4)
+    quats[:, 0] = 1.0
+    scales = torch.full((n, 3), 0.04)
+    opac = torch.full((n,), 0.6)
+    colors = torch.rand(n, 3)
+    means_cam = means
+    cov_cam = rotate_covariances(torch.eye(3), build_covariance(scales, quats))
+    mean_2d, cov_2d, valid = unscented_equirect_project(means_cam, cov_cam, cam)
+    radius = _radii_from_cov2d(cov_2d, 3.0)
+    depth = torch.linalg.norm(means_cam, dim=-1)
+    torch_img = _composite_oit_batched(
+        mean_2d, cov_2d, radius, opac, colors, depth, valid, cam
+    )
+    ref = soft_oit_reference(
+        mean_2d.numpy(),
+        cov_2d.numpy(),
+        radius.numpy(),
+        opac.numpy(),
+        colors.numpy(),
+        depth.numpy(),
+        valid.numpy(),
+        cam.height,
+        cam.width,
+    )
+    # Same soft-OIT family; footprints differ slightly (radius half vs fixed grid)
+    mae = float(np.abs(torch_img.numpy() - ref).mean())
+    assert mae < 0.25
+    assert np.isfinite(ref).all()
 
 
 def test_schedule_coarse_to_fine() -> None:

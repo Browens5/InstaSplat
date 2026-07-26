@@ -74,13 +74,14 @@ InstaSplat’s Mac-local, tiled 8K pipeline.
 
 ### MetalSplatter (scier) — Apple Metal viewer
 - Swift/Metal renderer for PLY/SPZ/.splat on iOS/macOS/visionOS.
-- **Use:** recommended Mac preview path beside Brush viewer; not a trainer.
+- **Use:** recommended Mac viewer for InstaSplat exports; not a trainer.
 
 ### OpenSplat (pierotofy) — portable C++ trainer
 - COLMAP/OpenSfM/ODM/nerfstudio in → PLY/splat out.
 - **Metal (`-DGPU_RUNTIME=MPS`)**, CUDA, HIP, or CPU.
 - Resume training; AGPL license.
-- **Use:** strongest alternative/complement to Brush on Apple Silicon.
+- **Use (historical):** evaluated as a Mac trainer; InstaSplat’s product path is
+  **metal_equirect** (full equirect) instead.
 
 ### instant-ngp (NVlabs)
 - Hash-grid NeRF speed culture; CUDA.

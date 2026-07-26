@@ -47,15 +47,14 @@ def run_export(cfg: PipelineConfig, paths: JobPaths, ply_path: Path | None) -> E
         raise RuntimeError(status.notes or "splat-transform not found")
 
     if ply_path is None:
-        # Search brush exports
         candidates = sorted(
-            paths.brush_export.rglob("*.ply"),
+            paths.train_export.rglob("*.ply"),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
         if not candidates:
             raise FileNotFoundError(
-                f"No PLY found under {paths.brush_export}. Run train stage first."
+                f"No PLY found under {paths.train_export}. Run train stage first."
             )
         ply_path = candidates[0]
 

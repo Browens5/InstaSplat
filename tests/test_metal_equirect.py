@@ -6,7 +6,6 @@ import struct
 from pathlib import Path
 
 import numpy as np
-import pytest
 import torch
 
 from instasplat.metal_equirect.cameras import (
@@ -173,7 +172,6 @@ def test_densify_clone_split_prune() -> None:
     # Fake grads so densify triggers
     model.means.grad = torch.ones_like(model.means) * 0.01
     state.accumulate(model)
-    n0 = model.n
     stats = densify_and_prune(
         model,
         state,

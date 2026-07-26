@@ -1,4 +1,4 @@
-"""Gaussian parameterizations and PLY I/O (Brush / gsplat compatible)."""
+"""Gaussian parameterizations and PLY I/O (3DGS / gsplat-compatible)."""
 
 from __future__ import annotations
 

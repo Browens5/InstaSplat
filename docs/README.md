@@ -1,14 +1,16 @@
 # InstaSplat documentation
 
-Deep-dive guides. Start with the main [README](../README.md) if you are new.
+Start with the main [README](../README.md). For the metal splat process, read
+**[METAL_SPLAT_WORKFLOW.md](METAL_SPLAT_WORKFLOW.md)** first.
 
 | Doc | Audience | Topic |
 |-----|----------|--------|
-| [SETUP_MACOS.md](SETUP_MACOS.md) | Mac users | Install ffmpeg, COLMAP, PyTorch, Python |
-| [MAC_LONG_360.md](MAC_LONG_360.md) | Mac users | Best local path for long 360 → tiled splat |
-| [LARGE_8K.md](LARGE_8K.md) | Advanced | Chunking, align, merge knobs |
-| [CAPTURE_GUIDELINES.md](CAPTURE_GUIDELINES.md) | Anyone filming | How to walk / shoot for good results |
-| [FEASIBILITY.md](FEASIBILITY.md) | Planners | What works on Mac vs cloud |
-| [CLOUD.md](CLOUD.md) | Operators | Hybrid / GPU worker notes |
-| [RESEARCH_STRATEGIES.md](RESEARCH_STRATEGIES.md) | Researchers | Open 3DGS projects that shaped the design |
-| [METAL_EQUIRECT_TRAINER.md](METAL_EQUIRECT_TRAINER.md) | Mac / research | Native equirect Gaussian trainer (3DGUT-inspired) |
+| [METAL_SPLAT_WORKFLOW.md](METAL_SPLAT_WORKFLOW.md) | Everyone | **Install → capture → train → export** (canonical) |
+| [SETUP_MACOS.md](SETUP_MACOS.md) | Mac users | One-shot / manual install details |
+| [MAC_LONG_360.md](MAC_LONG_360.md) | Mac users | Tiled long / 8K defaults & safety rails |
+| [METAL_EQUIRECT_TRAINER.md](METAL_EQUIRECT_TRAINER.md) | Developers | Trainer architecture (UT / densify) |
+| [CAPTURE_GUIDELINES.md](CAPTURE_GUIDELINES.md) | Anyone filming | How to walk / shoot for better results |
+| [LARGE_8K.md](LARGE_8K.md) | Advanced | Chunk size, fps, merge tuning |
+| [FEASIBILITY.md](FEASIBILITY.md) | Planners | Mac vs cloud tradeoffs |
+| [CLOUD.md](CLOUD.md) | Operators | Optional CUDA / hybrid workers |
+| [RESEARCH_STRATEGIES.md](RESEARCH_STRATEGIES.md) | Researchers | Prior art that shaped the design |

@@ -45,6 +45,41 @@ def version() -> None:
     console.print(__version__)
 
 
+@app.command("setup")
+def setup_cmd(
+    no_system: bool = typer.Option(
+        False,
+        "--no-system",
+        "--verify",
+        help="Only check readiness (skip brew/npm installs)",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show actions without installing"),
+) -> None:
+    """Install/verify tools for the metal_equirect pipeline (streamlined)."""
+    from instasplat.utils.setup_env import run_setup
+
+    console.print("[bold cyan]InstaSplat setup[/bold cyan]")
+    report = run_setup(install_system=not no_system, dry_run=dry_run)
+    table = Table(title="Setup checklist")
+    table.add_column("Step")
+    table.add_column("OK")
+    table.add_column("Detail")
+    for step in report.steps:
+        table.add_row(step.name, "✓" if step.ok else "✗", step.detail or "—")
+    console.print(table)
+    if report.ready:
+        console.print("\n[green]Ready[/green] for metal splat training.")
+    else:
+        console.print(
+            "\n[yellow]Not fully ready.[/yellow] "
+            "On a fresh Mac, prefer: ./scripts/setup_macos.sh"
+        )
+        raise typer.Exit(code=1)
+    console.print("\n[bold]Next[/bold]")
+    for line in report.next_commands:
+        console.print(f"  {line}")
+
+
 @app.command("doctor")
 def doctor(
     splat_transform_bin: str = typer.Option(
@@ -71,13 +106,12 @@ def doctor(
     )
     if not data["ready_stages"].get("train"):
         console.print(
-            "\n[yellow]PyTorch missing:[/yellow] pip install torch "
-            "(Apple Silicon: MPS wheel from pytorch.org). "
-            "Required for metal_equirect training."
+            "\n[yellow]PyTorch missing:[/yellow] run `./scripts/setup_macos.sh` or "
+            "`pip install -e .` (Apple Silicon: MPS wheel from pytorch.org)."
         )
     console.print(
-        "[cyan]Tip:[/cyan] `instasplat mac-360 -i ./capture_equirect_8k.mp4 -o ./runs -n walk` "
-        "for the tiled Metal equirect pipeline."
+        "[cyan]Tip:[/cyan] see docs/METAL_SPLAT_WORKFLOW.md — then "
+        "`instasplat mac-360 -i ./capture_equirect.mp4 -o ./runs -n walk`"
     )
 
 

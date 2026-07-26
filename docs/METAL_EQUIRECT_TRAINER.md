@@ -1,18 +1,18 @@
-# Mac-native Metal equirect Gaussian trainer
+# metal_equirect trainer (architecture)
 
-InstaSplat’s **`metal_equirect`** training backend optimizes 3D Gaussians
-directly against **equirectangular** frames, using COLMAP poses. It is the
-local Mac counterpart to cloud `gsplat_3dgut` (see [CLOUD.md](CLOUD.md)).
+Technical reference for InstaSplat’s sole Gaussian trainer. For install and
+end-to-end steps, use **[METAL_SPLAT_WORKFLOW.md](METAL_SPLAT_WORKFLOW.md)**.
 
-## Sole trainer
+## Role
 
-`metal_equirect` is InstaSplat’s **only** Gaussian trainer. It trains on full
-equirect frames with a **nonlinear camera projection** (Unscented Transform),
-inspired by NVIDIA **3DGUT** / [gsplat](https://github.com/nerfstudio-project/gsplat).
-COLMAP still uses cubemap faces for SfM on Mac; poses are lifted to panoramas
-for training.
+`metal_equirect` optimizes 3D Gaussians against **full equirectangular** frames
+using COLMAP poses. Projection uses a **3DGUT-style Unscented Transform**
+(nonlinear camera), inspired by NVIDIA 3DGUT / [gsplat](https://github.com/nerfstudio-project/gsplat).
 
-## Architecture (gsplat / 3DGUT-inspired)
+On Mac, COLMAP usually runs on **cubemap** faces; training lifts `{stem}_front`
+poses back to panoramas so every pixel of the 360 frame can supervise the model.
+
+## Data flow
 
 ```text
 equirect frames (01_frames/equirect)
@@ -20,79 +20,70 @@ equirect frames (01_frames/equirect)
 COLMAP sparse (cubemap-lifted or EQUIRECTANGULAR)
         │
         ▼
-┌─────────────────────────────┐
-│  Dataset assembly           │  images + masks + viewmats
-│  (lift *_front poses → 360) │
-└─────────────┬───────────────┘
-              ▼
-┌─────────────────────────────┐
-│  GaussianModel (torch)      │  means, quats, scales, opacity, SH
-└─────────────┬───────────────┘
-              ▼
-┌─────────────────────────────┐
-│  Equirect rasterizer        │
-│  1. world → camera          │
-│  2. UT sigma-points         │  ← 3DGUT idea
-│  3. equirect project        │  lon/lat → uv
-│  4. 2D cov + soft α-blend   │
-│  5. optional Metal kernels  │  projection / tile prep (Mac)
-└─────────────┬───────────────┘
-              ▼
-  L1 + SSIM (latitude-weighted) → Adam → PLY export
+ Dataset assembly  →  GaussianModel (torch)
+        │
+        ▼
+ Equirect rasterizer
+   1. world → camera
+   2. UT sigma-points          ← 3DGUT idea
+   3. equirect project         lon/lat → uv
+   4. tile / OIT α-blend
+   5. optional eval3d opacity
+        │
+        ▼
+ Latitude-weighted L1 (+ structure) → Adam
+        │
+        ▼
+ MCMC densify/prune → PLY + preview JPEGs
 ```
 
-| Piece | Role | Reference |
-|-------|------|-----------|
-| Equirect project | \(u,v\) from camera rays | spherical mapping |
-| Unscented Transform | project mean+σ points for 2D mean/cov | 3DGUT / gsplat `with_ut` |
-| Eval in 3D (planned) | particle response along ray | gsplat `with_eval3d` |
-| MCMC densify (v1: clone/split) | grow/prune Gaussians | gsplat MCMC for 3DGUT |
-| Metal `.metal` shaders | accelerate project/sort on Apple GPU | Mac-native path |
-| PyTorch MPS/CPU | autodiff training loop | portable Mac + CI |
+| Module | Path |
+|--------|------|
+| Cameras / UT | `instasplat/metal_equirect/cameras.py` |
+| Dataset / pose lift | `instasplat/metal_equirect/dataset.py` |
+| Rasterizer | `instasplat/metal_equirect/rasterize.py` |
+| Densify | `instasplat/metal_equirect/densify.py` |
+| Train loop | `instasplat/metal_equirect/train_loop.py` |
+| Pipeline entry | `instasplat/metal_equirect/backend.py` |
+| Metal shaders | `instasplat/metal_equirect/metal/EquirectProject.metal` |
 
-## Usage
+## CLI
 
 ```bash
-# After SfM has a sparse model:
-instasplat run --job ./runs/walk_360 --only train
-instasplat train-equirect -j ./runs/walk_360
-
-# Or GUI: Run / Continue (trainer is always metal_equirect)
+instasplat run --job ./runs/walk --only train
+instasplat train-equirect -j ./runs/walk --steps 8000 --composite oit
 ```
 
-Config (`train` section):
+## Config
 
 ```yaml
-backend: metal_equirect
-total_steps: 15000
-max_resolution: 1024          # equirect width; height = width/2
-export_every: 2000
-sh_degree: 1
-lr: 0.01
+train:
+  backend: metal_equirect
+  total_steps: 15000
+  max_resolution: 1024
+  export_every: 2000
+  sh_degree: 1
+  lr: 0.01
+  with_eval3d: true
+  composite: tile          # tile | oit
+  sh_warmup_steps: 500
+  densify_every: 200
 ```
-
-## Pose sources
-
-1. **Native EQUIRECTANGULAR COLMAP** — image names match equirect stems; cameras marked equirect.
-2. **Cubemap SfM (default on Mac)** — take `{stem}_front` pose as the panorama pose (front face = yaw 0 / pitch 0), load `{stem}.jpg` from equirect frames.
 
 ## Device policy
 
 | Device | Behavior |
 |--------|----------|
-| Apple Silicon + PyTorch MPS | Primary training device |
-| CPU | Fallback / CI smoke |
-| Metal shaders | Compiled on Mac via `xcrun metal` when present; Python UT path always available |
+| Apple Silicon + MPS | Default training device |
+| CPU | Fallback / CI |
+| Metal metallib | Compiled on macOS when `xcrun metal` exists; torch UT path always works |
 
-CUDA **gsplat 3DGUT** remains the cloud upgrade for large jobs (`cloud_job.json`).
+Cloud CUDA **gsplat 3DGUT** remains optional for scale (`cloud_job.json`).
 
 ## Roadmap
 
-1. ~~Core UT equirect rasterizer + train loop + PLY export~~
-2. ~~Tile-based compositing + OIT fast path~~
-3. ~~MCMC densify/prune + SH warmup schedule~~
-4. ~~eval3d opacity modulation (3DGUT-inspired)~~
-5. ~~Preview JPEGs + `train_heartbeat.json` + Artifacts tab~~
-6. ~~`instasplat train-equirect` CLI + binary COLMAP `images.bin`~~
-7. Native Metal kernel dispatch for UT projection (metallib compile ready)
-8. Faster tile sort / max-per-tile GPU path (gsplat parity)
+1. ~~UT equirect rasterizer, train loop, PLY~~
+2. ~~Tile / OIT composite, eval3d, MCMC densify, SH warmup~~
+3. ~~Previews, heartbeat, `train-equirect`, images.bin~~
+4. Native Metal UT dispatch (metallib present; torch path active)
+5. Higher-throughput tile sort (gsplat parity)

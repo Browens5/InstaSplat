@@ -1,55 +1,69 @@
 # macOS setup
 
+Install everything needed for the **metal_equirect** pipeline (ffmpeg, COLMAP,
+PyTorch MPS, splat-transform, optional GUI).
+
+For the full process after install, read **[METAL_SPLAT_WORKFLOW.md](METAL_SPLAT_WORKFLOW.md)**.
+
 ## Requirements
 
-- macOS 13+ recommended (Apple Silicon preferred)
-- Homebrew
+- macOS 13+ (Apple Silicon strongly preferred)
+- [Homebrew](https://brew.sh)
 - Python 3.11+
-- Node.js 18+ (for splat-transform)
-- PyTorch with MPS (included via `pip install -e .`)
-- Insta360 Studio (for equirect exports)
+- Node.js 18+ (for `splat-transform`)
+- Insta360 Studio (equirect export — MediaSDK is not on macOS)
 
-## Quick setup
+## One-shot install
 
 ```bash
-git clone <this-repo> && cd InstaSplat
-./scripts/setup_macos.sh          # brew tools + splat-transform
-python3 -m venv .venv
+git clone https://github.com/Browens5/InstaSplat.git
+cd InstaSplat
+./scripts/setup_macos.sh
 source .venv/bin/activate
-pip install -e ".[gui,dev]"       # includes torch for metal_equirect
 instasplat doctor
 ```
 
-If `doctor` reports PyTorch without MPS on Apple Silicon, install the official
-MPS wheel from https://pytorch.org .
+What the script does:
 
-## Manual installs
+1. `brew install ffmpeg exiftool colmap git`
+2. `npm i -g @playcanvas/splat-transform`
+3. Create `.venv` and `pip install -e ".[gui,dev]"` (includes **torch**)
+4. Run `instasplat setup` / `doctor`
+
+| Environment variable | Meaning |
+|----------------------|---------|
+| `WITH_GUI=0` | Install without PySide6 |
+| `SKIP_BREW=1` | Skip Homebrew |
+| `SKIP_PIP=1` | Skip venv / pip |
+
+## Verify / repair
+
+```bash
+instasplat setup              # may brew/npm install missing tools
+instasplat setup --verify     # check only (alias: --no-system)
+instasplat doctor             # stage readiness + MPS report
+```
+
+If Apple Silicon shows PyTorch **without MPS**, install the official wheel from
+[pytorch.org](https://pytorch.org), then re-check with `doctor`.
+
+## Manual install (equivalent)
 
 ```bash
 brew install ffmpeg exiftool colmap git
-npm install -g @playcanvas/splat-transform
+npm i -g @playcanvas/splat-transform
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[gui,dev]"
+instasplat doctor
 ```
 
-## Insta360 Studio export checklist
+## Capture input
 
-1. Open the capture in Insta360 Studio
-2. Enable optical-flow stitch / FlowState as desired
-3. Export **equirectangular** MP4 (not reframed flat)
-4. Save next to the `.insv` or pass the MP4 directly to InstaSplat
+1. Export **equirectangular** MP4 from Insta360 Studio  
+2. Keep sibling `.insv` (or `gyro.csv` / `gps.csv`) beside it  
 
-## YOLO models
+## Next
 
-First mask run downloads weights (e.g. `yolov8m-seg.pt`). For air-gapped machines, place weights in the working directory or Ultralytics cache.
-
-## COLMAP notes
-
-- Homebrew COLMAP on Apple Silicon is typically **CPU** for mapping — fine for small jobs.
-- Cubemap SfM (`perspective_cubemap`) is the default. Poses are lifted to equirect for
-  **metal_equirect** training (see [METAL_EQUIRECT_TRAINER.md](METAL_EQUIRECT_TRAINER.md)).
-
-## GUI
-
-```bash
-pip install 'instasplat[gui]'
-instasplat gui
-```
+- Workflow: [METAL_SPLAT_WORKFLOW.md](METAL_SPLAT_WORKFLOW.md)  
+- Long 8K tiled jobs: [MAC_LONG_360.md](MAC_LONG_360.md)  
+- GUI: `instasplat gui`  

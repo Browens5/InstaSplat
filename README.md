@@ -121,41 +121,39 @@ instasplat mac-360 -i ./capture_equirect_8k.mp4 -o ./runs -n beach_walk
 
 ## Quick start (macOS)
 
+**Full walkthrough:** [docs/METAL_SPLAT_WORKFLOW.md](docs/METAL_SPLAT_WORKFLOW.md)
+
 ### 1. Capture & stitch
 
-1. Record with an Insta360 (prefer steady walking, good overlap, few crowds)
+1. Record with an Insta360 (steady walking, good overlap, few crowds)
 2. In **Insta360 Studio**, export a stitched **equirectangular MP4**
 3. Keep the original `.insv` next to that MP4 (gyro/GPS), or add `gyro.csv` / `gps.csv`
 
-> Official Insta360 MediaSDK does **not** run on macOS. Studio export is the
-> supported local stitch path.
+> MediaSDK does **not** run on macOS. Studio export is the supported local stitch path.
 
-### 2. Install
+### 2. Install (one script)
 
 ```bash
 git clone https://github.com/Browens5/InstaSplat.git
 cd InstaSplat
-
-python3 -m venv .venv
+./scripts/setup_macos.sh     # brew + npm + .venv + pip (torch + GUI)
 source .venv/bin/activate
-pip install -e ".[gui,dev]"
-
-./scripts/setup_macos.sh     # ffmpeg, COLMAP, splat-transform
-pip install -e ".[gui,dev]" # includes PyTorch for metal_equirect
-instasplat doctor            # confirms mac_long_360 readiness
+instasplat doctor            # mac_long_360 should be yes
 ```
+
+Repair / verify later: `instasplat setup` · details in [docs/SETUP_MACOS.md](docs/SETUP_MACOS.md).
 
 ### 3. Run
 
 ```bash
-# Best for long / 8K walks
+# Best for long / 8K walks (tiled metal_equirect)
 instasplat mac-360 -i ./capture_equirect_8k.mp4 -o ./runs -n beach_walk
 
-# Or use the desktop UI
+# Desktop UI (live viewer + artifacts)
 instasplat gui
 ```
 
-Outputs appear under `runs/beach_walk/06_export/`.
+Outputs: `runs/beach_walk/06_export/` (`scene.ply` / `.sog` / `.spz`).
 
 ---
 
@@ -203,9 +201,9 @@ Full long-360 guide: **[docs/MAC_LONG_360.md](docs/MAC_LONG_360.md)**
 ## Desktop app features
 
 - Metal-first defaults for long 360 jobs
-- **Pause / Resume / Stop** (pauses training with SIGSTOP)
-- Live **task ETA** and overall progress
-- Multi-select stages
+- **Pause / Resume / Stop** at stage checkpoints
+- Live **task ETA**, overall progress, and **3D / Artifacts** viewer
+- Multi-select stages; open previous runs to continue
 
 ---
 
@@ -215,11 +213,12 @@ Full long-360 guide: **[docs/MAC_LONG_360.md](docs/MAC_LONG_360.md)**
 InstaSplat/
 ├── README.md                 ← you are here
 ├── assets/                   ← diagrams for this README
-├── docs/                     ← detailed guides (see docs/README.md)
+├── docs/METAL_SPLAT_WORKFLOW.md  ← canonical metal splat process
+├── docs/                     ← more guides (docs/README.md)
 ├── examples/                 ← sample YAML configs
-├── scripts/                  ← setup_macos, mac-360 helper
-├── instasplat/               ← Python package (CLI + GUI + stages)
-└── tests/                    ← unit tests
+├── scripts/setup_macos.sh    ← one-shot install
+├── instasplat/               ← CLI + GUI + metal_equirect + stages
+└── tests/
 ```
 
 ---
@@ -228,13 +227,13 @@ InstaSplat/
 
 | Guide | When to read it |
 |-------|-----------------|
-| [docs/SETUP_MACOS.md](docs/SETUP_MACOS.md) | First-time install |
+| [docs/METAL_SPLAT_WORKFLOW.md](docs/METAL_SPLAT_WORKFLOW.md) | **Install → train → export** (start here) |
+| [docs/SETUP_MACOS.md](docs/SETUP_MACOS.md) | Install details / repair |
 | [docs/MAC_LONG_360.md](docs/MAC_LONG_360.md) | Long / 8K tiled jobs |
+| [docs/METAL_EQUIRECT_TRAINER.md](docs/METAL_EQUIRECT_TRAINER.md) | Trainer architecture |
 | [docs/CAPTURE_GUIDELINES.md](docs/CAPTURE_GUIDELINES.md) | How to film for better results |
 | [docs/LARGE_8K.md](docs/LARGE_8K.md) | Tuning chunk size, fps, merge |
-| [docs/FEASIBILITY.md](docs/FEASIBILITY.md) | Mac vs cloud tradeoffs |
-| [docs/CLOUD.md](docs/CLOUD.md) | Hybrid / CUDA workers |
-| [docs/RESEARCH_STRATEGIES.md](docs/RESEARCH_STRATEGIES.md) | Research inspiration |
+| [docs/CLOUD.md](docs/CLOUD.md) | Optional CUDA / hybrid workers |
 
 ---
 
@@ -263,7 +262,7 @@ Only if you enable GPS scale (or a known measured distance). Otherwise it still 
 InstaSplat retries that frame on CPU and can switch the rest of the job to CPU automatically.
 
 **Can I pause overnight training?**  
-Yes in the GUI — Pause freezes the pipeline and training process; Resume continues.
+Yes in the GUI — Pause freezes the pipeline at stage checkpoints; Resume continues.
 
 ---
 

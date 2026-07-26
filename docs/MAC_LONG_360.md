@@ -137,6 +137,7 @@ Start with defaults from `enable_mac_long_360_defaults()`.
 
 ## See also
 
+- [METAL_SPLAT_WORKFLOW.md](METAL_SPLAT_WORKFLOW.md) — full metal splat process
 - [LARGE_8K.md](LARGE_8K.md) — tile/align details
 - [CAPTURE_GUIDELINES.md](CAPTURE_GUIDELINES.md) — walk slow, overlap, avoid crowds
-- [SETUP_MACOS.md](SETUP_MACOS.md) — brew / cargo / npm installs
+- [SETUP_MACOS.md](SETUP_MACOS.md) — one-shot install

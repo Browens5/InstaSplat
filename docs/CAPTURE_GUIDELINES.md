@@ -20,7 +20,7 @@ sequential tiled path.
 1. Don’t teleport / cut discontinuous clips into one job without re-chunking.
 2. Don’t spin in place for long (weak baseline for SfM).
 3. Don’t rely on raw dual-fisheye without stitch for production quality.
-4. Don’t expect COLMAP + cubemap to equal native 3DGUT equirect training (cloud upgrade path).
+4. Local path uses COLMAP EQUIRECTANGULAR + metal_equirect; cloud 3DGUT remains an optional scale-up.
 
 ## Suggested settings
 

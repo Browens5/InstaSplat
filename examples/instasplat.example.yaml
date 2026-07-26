@@ -17,9 +17,8 @@ mask:
   dilate_px: 4
 
 sfm:
-  mode: perspective_cubemap
-  face_resolution: 1024
-  cubemap_faces: 6
+  mode: equirectangular          # full 360 throughout SfM + train (COLMAP ≥ 4.1)
+  camera_model: EQUIRECTANGULAR
   matcher: sequential
   sequential_overlap: 15
   quality: high

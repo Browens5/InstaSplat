@@ -266,7 +266,9 @@ class ViewerPanel(QWidget):
         add_glob("frame", paths.equirect_frames, "*.jpg", 12)
         add_glob("frame", paths.equirect_frames, "*.png", 12)
         add_glob("mask", paths.equirect_masks, "*.png", 12)
-        add_glob("sfm image", paths.cubemap_images, "*.jpg", 8)
+        add_glob("sfm image", paths.equirect_sfm_images, "*.jpg", 8)
+        add_glob("sfm image", paths.equirect_sfm_images, "*.png", 8)
+        add_glob("sfm image", paths.cubemap_images, "*.jpg", 4)  # legacy cubemap
         for model in (
             paths.colmap_model,
             paths.scaled_model,

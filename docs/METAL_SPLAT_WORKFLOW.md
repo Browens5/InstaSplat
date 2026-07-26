@@ -15,10 +15,10 @@ Training backend is **metal_equirect** only (full equirect + COLMAP on MPS/Metal
 flowchart TB
   A["Studio equirect MP4\n(+ .insv / gyro+gps)"] --> B["ingest + extract"]
   B --> C["YOLO masks MPS"]
-  C --> D["Cubemap remap"]
-  D --> E["COLMAP SfM"]
+  C --> D["Stage equirect\nimages_equirect"]
+  D --> E["COLMAP EQUIRECTANGULAR"]
   E --> F["Scale / refine"]
-  F --> G["metal_equirect train\nequirect + lifted poses"]
+  F --> G["metal_equirect train\nsame panoramas + poses"]
   G --> H["export PLY / SOG / SPZ"]
 
   style G fill:#dceee4,stroke:#1f6f4a
@@ -27,9 +27,8 @@ flowchart TB
 | Term | Meaning |
 |------|---------|
 | **Equirect frames** | Full 360×180 panoramas (`01_frames/equirect/`) |
-| **Cubemap SfM** | COLMAP on perspective faces (reliable on Mac) |
-| **Pose lift** | `{stem}_front` COLMAP poses → one pose per panorama |
-| **metal_equirect** | PyTorch MPS trainer with 3DGUT-style UT projection |
+| **EQUIRECTANGULAR SfM** | COLMAP ≥ 4.1 on full panoramas (`03_sfm/images_equirect`) |
+| **metal_equirect** | PyTorch MPS trainer on the same panoramas + COLMAP poses |
 | **Exports** | `scene.ply` (+ sog/spz via splat-transform) |
 
 Trainer internals: [METAL_EQUIRECT_TRAINER.md](METAL_EQUIRECT_TRAINER.md).  
@@ -116,7 +115,7 @@ instasplat mac-360 -i ./capture_equirect.mp4 -o ./runs -n walk_360
 | 1 | `ingest` | Copy/link video; pull gyro/GPS | `00_ingest/equirect.mp4`, `gyro.csv`, `gps.csv` |
 | 2 | `plan_chunks` | Overlapping time windows; denser fps on turns | `10_chunks/manifest.json` |
 | 3 | `preflight` | ffmpeg/colmap/torch/disk/stitch guards | `preflight.json` |
-| 4 | `process_chunks` | Per tile: mask → cubemap → COLMAP → scale → refine → **train** → export | `10_chunks/chunk_*/…` |
+| 4 | `process_chunks` | Per tile: mask → EQUIRECTANGULAR COLMAP → scale → refine → **train** → export | `10_chunks/chunk_*/…` |
 | 5 | `align_chunks` | Sim3 align with GPS/gyro | alignment reports |
 | 6 | `merge_chunks` | splat-transform merge + prune | `11_merged/scene_merged.ply` |
 | 7 | `package` | quality + LOD + cloud handoff | `quality.json`, `cloud_job.json`, `06_export/` |
@@ -124,7 +123,7 @@ instasplat mac-360 -i ./capture_equirect.mp4 -o ./runs -n walk_360
 Inside each tile’s **train** step:
 
 1. Load equirect frames + masks  
-2. Lift COLMAP cubemap poses (`*_front` → panorama)  
+2. Use COLMAP EQUIRECTANGULAR poses (same panorama names)  
 3. Init Gaussians from sparse points  
 4. Optimize with UT equirect rasterizer (MPS)  
 5. Densify / prune; write previews + PLY  
@@ -133,8 +132,8 @@ Inside each tile’s **train** step:
 10_chunks/chunk_000/
   01_frames/equirect/
   02_masks/equirect/
-  03_sfm/images/          ← cubemap faces for COLMAP
-  03_sfm/sparse/0/
+  03_sfm/images_equirect/   ← full panoramas for COLMAP
+  03_sfm/sparse/0/          ← EQUIRECTANGULAR cameras
   05_train/exports/
     scene.ply
     previews/step_*.jpg
@@ -226,8 +225,9 @@ Starter YAML: `examples/large8k.example.yaml`, `instasplat init-config --large-8
 |---------|-----|
 | `doctor` train = no | `pip install -e .`; MPS wheel on Apple Silicon |
 | Preflight: no trainer | Same — PyTorch required |
-| Empty COLMAP / SfM fail | Use `perspective_cubemap`; tiled jobs use `process_chunks`, not top-level `sfm` |
-| Train: no equirect views | Need `01_frames/equirect` and `{stem}_front` (or native) COLMAP names |
+| Empty COLMAP / SfM fail | Need COLMAP ≥ 4.1 (`brew upgrade colmap`); tiled jobs use `process_chunks`, not top-level `sfm` |
+| No EQUIRECTANGULAR | Upgrade COLMAP to ≥ 4.1 — cubemap fallback is no longer automatic |
+| Train: no equirect views | Need `01_frames/equirect` and matching EQUIRECTANGULAR COLMAP image names |
 | MPS OOM mid-train | Lower `max_resolution` / `total_steps`; keep `serialize_train` |
 | YOLO MPS crash | Pipeline falls back to CPU for masks |
 | Merge blocked | Fix failed tiles or `--allow-partial-merge` |

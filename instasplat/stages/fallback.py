@@ -68,11 +68,13 @@ def write_telemetry_colmap_model(
     gps_csv: Path | None,
     image_size: tuple[int, int] = (1024, 1024),
     focal: float | None = None,
+    camera_model: str = "EQUIRECTANGULAR",
 ) -> int:
     """
     Synthesize a minimal COLMAP text model from GPS centers + gyro rotations.
 
     Enables continuing the splat pipeline when SfM collapses (unposed-style prior).
+    Default camera model is EQUIRECTANGULAR (params = width, height).
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     images = sorted(list(image_dir.glob("*.jpg")) + list(image_dir.glob("*.png")))
@@ -84,11 +86,16 @@ def write_telemetry_colmap_model(
     gyro_rots = integrate_orientation(gyro) if gyro is not None else None
 
     w, h = image_size
-    f = focal if focal is not None else float(0.9 * w)
+    model = (camera_model or "EQUIRECTANGULAR").upper()
+    if model == "EQUIRECTANGULAR":
+        cam_line = f"1 EQUIRECTANGULAR {w} {h} {float(w)} {float(h)}"
+    else:
+        f = focal if focal is not None else float(0.9 * w)
+        cam_line = f"1 SIMPLE_PINHOLE {w} {h} {f} {w/2.0} {h/2.0}"
     cameras = [
         "# Camera list with one line of data per camera:",
         "# CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]",
-        f"1 SIMPLE_PINHOLE {w} {h} {f} {w/2.0} {h/2.0}",
+        cam_line,
     ]
     (out_dir / "cameras.txt").write_text("\n".join(cameras) + "\n", encoding="utf-8")
 
@@ -159,14 +166,60 @@ def run_fallback_poses(cfg: PipelineConfig, paths: JobPaths) -> FallbackResult |
     if ft_path.exists():
         frame_times = {k: float(v) for k, v in json.loads(ft_path.read_text()).items()}
 
+    use_equirect = cfg.sfm.mode != "perspective_cubemap"
+    if use_equirect:
+        # Stage panoramas if extract already ran but SfM staging did not
+        image_dir = paths.equirect_sfm_images
+        if not any(image_dir.glob("*")) and any(paths.equirect_frames.glob("*")):
+            image_dir.mkdir(parents=True, exist_ok=True)
+            import shutil
+
+            for fr in list(paths.equirect_frames.glob("*.jpg")) + list(
+                paths.equirect_frames.glob("*.png")
+            ):
+                dest = image_dir / fr.name
+                if not dest.exists():
+                    try:
+                        dest.symlink_to(fr.resolve())
+                    except OSError:
+                        shutil.copy2(fr, dest)
+        if not any(image_dir.glob("*")):
+            image_dir = paths.equirect_frames
+        # Probe panorama size
+        sample = next(
+            iter(
+                list(image_dir.glob("*.jpg"))
+                + list(image_dir.glob("*.png"))
+                + list(paths.equirect_frames.glob("*.jpg"))
+            ),
+            None,
+        )
+        w, h = 2048, 1024
+        if sample is not None:
+            try:
+                import cv2
+
+                im = cv2.imread(str(sample), cv2.IMREAD_COLOR)
+                if im is not None:
+                    h, w = im.shape[:2]
+            except Exception:  # noqa: BLE001
+                pass
+        camera_model = "EQUIRECTANGULAR"
+        image_size = (w, h)
+    else:
+        image_dir = paths.cubemap_images
+        camera_model = "SIMPLE_PINHOLE"
+        image_size = (cfg.sfm.face_resolution, cfg.sfm.face_resolution)
+
     out = paths.colmap_sparse / "0"
     n = 0 if cfg.dry_run else write_telemetry_colmap_model(
-        image_dir=paths.cubemap_images,
+        image_dir=image_dir,
         out_dir=out,
         frame_times=frame_times,
         gyro_csv=paths.gyro_csv if paths.gyro_csv.exists() else None,
         gps_csv=paths.gps_csv if paths.gps_csv.exists() else None,
-        image_size=(cfg.sfm.face_resolution, cfg.sfm.face_resolution),
+        image_size=image_size,
+        camera_model=camera_model,
     )
     if cfg.dry_run:
         out.mkdir(parents=True, exist_ok=True)
@@ -174,8 +227,12 @@ def run_fallback_poses(cfg: PipelineConfig, paths: JobPaths) -> FallbackResult |
     if n <= 0 and not cfg.dry_run:
         log.warning(
             "Telemetry fallback produced 0 poses (no images in %s and/or no frame_times) — not usable",
-            paths.cubemap_images,
+            image_dir,
         )
         return None
-    log.warning("Installed telemetry pose prior with %d images (SfM fallback)", n)
+    log.warning(
+        "Installed telemetry pose prior with %d images (SfM fallback, model=%s)",
+        n,
+        camera_model,
+    )
     return FallbackResult(out, n, "gyro_gps_prior")

@@ -26,8 +26,8 @@ mask:
   device: mps
 
 sfm:
-  mode: perspective_cubemap
-  face_resolution: 1280
+  mode: equirectangular
+  camera_model: EQUIRECTANGULAR
   matcher: sequential
   quality: high
 

@@ -99,8 +99,10 @@ class MaskConfig:
 class SfMConfig:
     """COLMAP / spherical SfM settings."""
 
-    mode: SfMMode = "perspective_cubemap"
-    camera_model: str = "SIMPLE_PINHOLE"
+    # Full 360 panoramas throughout SfM + train (requires COLMAP ≥ 4.1)
+    mode: SfMMode = "equirectangular"
+    # Used only when mode=perspective_cubemap; equirect path forces EQUIRECTANGULAR
+    camera_model: str = "EQUIRECTANGULAR"
     cubemap_faces: int = 6
     face_fov_deg: float = 90.0
     face_resolution: int = 1024
@@ -245,8 +247,9 @@ class PipelineConfig:
         """
         Best local-Mac settings for long 360 video → tiled Gaussian splat.
 
-        Metal-first: YOLO MPS → COLMAP CPU cubemap → metal_equirect train →
+        Metal-first: YOLO MPS → COLMAP EQUIRECTANGULAR → metal_equirect train →
         GPS/gyro tile align → splat-transform merge. No CUDA / LingBot-Map.
+        Requires COLMAP ≥ 4.1 for native spherical cameras.
         """
         self.mode = "tiled"
         self.chunk.enabled = True
@@ -261,8 +264,9 @@ class PipelineConfig:
         self.metal.prefer_metal = True
         self.metal.serialize_train = True
         self.mask.device = "mps"
-        self.sfm.mode = "perspective_cubemap"
-        self.sfm.face_resolution = 1280
+        self.sfm.mode = "equirectangular"
+        self.sfm.camera_model = "EQUIRECTANGULAR"
+        self.sfm.face_resolution = 1280  # unused in equirect mode; kept for cubemap opt-in
         self.sfm.quality = "high"
         self.sfm.matcher = "sequential"
         self.sfm.sequential_overlap = 18
@@ -274,6 +278,7 @@ class PipelineConfig:
         self.export.min_opacity = 0.05
         self.export.streamed_lod = True
         self.refine.enabled = True
+        self.refine.refine_distortion = False  # EQUIRECTANGULAR has no distortion params
         self.refine.pose_blend = 0.25
         self.refine.max_align_rmse_m = 8.0
         self.package.nerfstudio = True
@@ -406,10 +411,11 @@ mask:
   device: mps               # mps on Apple Silicon, cpu otherwise
 
 sfm:
-  mode: perspective_cubemap # perspective_cubemap | equirectangular | auto
-  face_resolution: 1280
+  mode: equirectangular     # equirectangular (default) | auto | perspective_cubemap
+  camera_model: EQUIRECTANGULAR
   matcher: sequential
   quality: high
+  # face_resolution only used if mode=perspective_cubemap
 
 scale:
   mode: gps                 # none | known_distance | gps | stereo_baseline
@@ -417,7 +423,7 @@ scale:
   stereo_baseline_m: 0.065
 
 train:
-  backend: metal_equirect   # native equirect Gaussian trainer (sole backend)
+  backend: metal_equirect   # full equirect Gaussian trainer (sole backend)
   total_steps: 15000
   max_resolution: 1024      # equirect width
   export_every: 2000
@@ -484,8 +490,8 @@ mask:
   device: mps
 
 sfm:
-  mode: perspective_cubemap
-  face_resolution: 1280
+  mode: equirectangular
+  camera_model: EQUIRECTANGULAR
   matcher: sequential
   quality: high
 

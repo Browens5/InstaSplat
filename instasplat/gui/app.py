@@ -523,7 +523,11 @@ class MainWindow(QMainWindow):
         opts_form.addRow(self.cloud_cb)
 
         self.sfm_mode = QComboBox()
-        self.sfm_mode.addItems(["perspective_cubemap", "equirectangular", "auto"])
+        self.sfm_mode.addItems(["equirectangular", "auto", "perspective_cubemap"])
+        self.sfm_mode.setToolTip(
+            "equirectangular (default): full 360 panoramas in COLMAP + metal_equirect. "
+            "Needs COLMAP ≥ 4.1. perspective_cubemap is a legacy opt-in."
+        )
         opts_form.addRow("SfM mode", self.sfm_mode)
 
         self.scale_mode = QComboBox()

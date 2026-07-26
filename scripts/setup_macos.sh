@@ -18,9 +18,9 @@ if [[ "$SKIP_BREW" != "1" ]]; then
     echo "ERROR: Homebrew not found. Install from https://brew.sh then re-run."
     exit 1
   fi
-  echo "==> Homebrew packages (ffmpeg, exiftool, colmap, git)"
+  echo "==> Homebrew packages (ffmpeg, exiftool, colmap≥4.1, git)"
   brew install ffmpeg exiftool git || true
-  brew install colmap || echo "WARN: colmap brew install failed — build from source if needed"
+  brew install colmap || brew upgrade colmap || echo "WARN: colmap brew install failed — need ≥ 4.1 for EQUIRECTANGULAR"
 else
   echo "==> Skipping brew (SKIP_BREW=1)"
 fi

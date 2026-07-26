@@ -62,11 +62,41 @@ class JobPaths:
 
     @property
     def cubemap_images(self) -> Path:
+        """Legacy perspective cubemap faces (only when sfm.mode=perspective_cubemap)."""
         return self.sfm / "images"
 
     @property
     def cubemap_masks(self) -> Path:
         return self.sfm / "masks"
+
+    @property
+    def equirect_sfm_images(self) -> Path:
+        """Staged full equirect panoramas for COLMAP EQUIRECTANGULAR SfM."""
+        return self.sfm / "images_equirect"
+
+    @property
+    def equirect_sfm_masks(self) -> Path:
+        return self.sfm / "masks_equirect"
+
+    def resolve_sfm_image_dir(self, mode: str | None = None) -> Path:
+        """Pick the COLMAP image directory for the active / detected SfM mode."""
+        eq = self.equirect_sfm_images
+        has_eq = eq.is_dir() and any(eq.iterdir())
+        if mode in {"equirectangular", "telemetry_fallback"} and has_eq:
+            return eq
+        if mode == "perspective_cubemap":
+            return self.cubemap_images
+        if has_eq:
+            return eq
+        return self.cubemap_images
+
+    def resolve_sfm_mask_dir(self, mode: str | None = None) -> Path | None:
+        img = self.resolve_sfm_image_dir(mode)
+        if img == self.equirect_sfm_images:
+            m = self.equirect_sfm_masks
+            return m if m.is_dir() and any(m.glob("*.png")) else None
+        m = self.cubemap_masks
+        return m if m.is_dir() and any(m.glob("*.png")) else None
 
     @property
     def colmap_db(self) -> Path:
@@ -125,6 +155,8 @@ class JobPaths:
             self.ingest,
             self.equirect_frames,
             self.equirect_masks,
+            self.equirect_sfm_images,
+            self.equirect_sfm_masks,
             self.cubemap_images,
             self.cubemap_masks,
             self.colmap_sparse,

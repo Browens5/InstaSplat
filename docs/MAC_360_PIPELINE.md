@@ -29,7 +29,7 @@ Off-the-shelf pieces do not form a full path by themselves:
 | Gap | Reality on a Mac |
 |-----|------------------|
 | **Stitch** | Official Insta360 MediaSDK is **not** on macOS. Local stitch = Insta360 Studio equirect export. |
-| **360 ≠ pinhole** | Most SfM / splat trainers assume perspective cameras. Full equirect needs cubemap SfM **and** a trainer that can supervise panoramas. |
+| **360 ≠ pinhole** | Most SfM / splat trainers assume perspective cameras. Full equirect needs COLMAP **EQUIRECTANGULAR** **and** a trainer that supervises panoramas. |
 | **Long walks** | A multi-minute 8K clip will not fit one COLMAP + train job. You need tiling, sensor-aware align, and merge. |
 | **Dynamics** | Pedestrians become “ghost geometry” unless masked before reconstruction. |
 | **Scale & continuity** | Without GPS/gyro (or a known distance), tiles drift and units are arbitrary. |
@@ -71,8 +71,8 @@ flowchart TB
     B --> D["ingest"]
     C --> D
     D --> E["plan tiles"]
-    E --> F["per tile:\nmask → cubemap SfM → scale → refine"]
-    F --> G["metal_equirect train\nfull equirect + lifted poses"]
+    E --> F["per tile:\nmask → EQUIRECTANGULAR SfM → scale → refine"]
+    F --> G["metal_equirect train\nfull equirect + EQUIRECTANGULAR poses"]
     G --> H["align tiles\nGPS / gyro Sim3"]
     H --> I["merge + export\nPLY / SOG / SPZ"]
   end
@@ -87,8 +87,8 @@ flowchart TB
 
 | Problem | Pipeline choice |
 |---------|-----------------|
-| COLMAP struggles on raw equirect | Remap to **perspective cubemap** faces for SfM |
-| Trainers ignore most of the sphere | **metal_equirect** trains on full panoramas; lifts `{stem}_front` poses back to 360 |
+| COLMAP + full sphere | Native **EQUIRECTANGULAR** camera model (COLMAP ≥ 4.1) on staged panoramas |
+| Trainers ignore most of the sphere | **metal_equirect** trains on the same full panoramas (poses already 360) |
 | Long / 8K video | **Overlapping time tiles**, denser fps on turns, serialized MPS train |
 | Tile seams / drift | **GPS + gyro Sim3** align with quality gates |
 | People in frame | **YOLO-seg on MPS** → masks into SfM / train |
@@ -108,7 +108,7 @@ Tiling defaults: [MAC_LONG_360.md](MAC_LONG_360.md).
 | `ingest` | Lock input video; extract / attach gyro & GPS |
 | `plan_chunks` | Split the walk into overlapping tiles (path- and turn-aware) |
 | `preflight` | Fail fast if stitch, tools, disk, or torch are missing |
-| `process_chunks` | For each tile: mask → cubemap COLMAP → scale → refine → **train** → tile export |
+| `process_chunks` | For each tile: mask → EQUIRECTANGULAR COLMAP → scale → refine → **train** → tile export |
 | `align_chunks` | Register tiles into one coordinate frame |
 | `merge_chunks` | Merge Gaussians; prune; write combined products |
 | `package` | `quality.json`, LOD previews, optional cloud handoff |
@@ -136,7 +136,7 @@ runs/<name>/
     chunk_000/
       01_frames/equirect/    panoramas
       02_masks/equirect/
-      03_sfm/                cubemap images + sparse model
+      03_sfm/                images_equirect + EQUIRECTANGULAR sparse model
       05_train/exports/      scene.ply, previews, heartbeat
   11_merged/                 aligned / merged splat
   06_export/                 final PLY / SOG / SPZ

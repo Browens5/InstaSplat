@@ -12,7 +12,7 @@ Studio equirect MP4 (+ sibling INSV / gyro+gps CSV)
   → plan overlapping tiles (gyro-dense fps, GPS path-aware)
   → preflight (tools, stitch, disk, GPS soft-fallback)
   → per tile (Metal-serialized):
-        YOLO MPS masks → cubemap COLMAP → metric scale
+        YOLO MPS masks → EQUIRECTANGULAR COLMAP → metric scale
         → pose refine → metal_equirect (MPS) → PLY
   → GPS/gyro Sim3 align (RANSAC + ICP + RMSE gate)
   → splat-transform merge + prune → ply / sog / spz
@@ -68,8 +68,9 @@ instasplat validate --job ./runs/walk_360
 
 Do **not** run the single-mode `sfm` stage on a tiled job — top-level
 `01_frames/` is empty; tiles live under `10_chunks/`. Use `process_chunks`
-(SfM mode: **perspective_cubemap**). Native `equirectangular` COLMAP is
-optional and often unsupported or empty-input on Mac.
+(SfM mode: **equirectangular**, COLMAP ≥ 4.1). Full panoramas are used for
+both COLMAP and metal_equirect training. Legacy `perspective_cubemap` is an
+explicit opt-in only.
 
 GUI: check **Stages** before Run (use “All for mode” to reset).
 
@@ -89,8 +90,7 @@ Sidecar names next to the MP4: `gyro.csv`, `gps.csv`, or `<stem>.gyro.csv`.
 | Stage | Device |
 |-------|--------|
 | YOLO people masks | PyTorch **MPS** (auto CPU fallback on known MPS crashes) |
-| Cubemap remap | CPU OpenCV |
-| COLMAP | CPU (typical Homebrew) |
+| COLMAP EQUIRECTANGULAR SfM | CPU (Homebrew COLMAP ≥ 4.1) |
 | metal_equirect train | **PyTorch MPS / Metal** (serialized per tile) |
 | splat-transform merge | CPU Node |
 

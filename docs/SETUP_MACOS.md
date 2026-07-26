@@ -28,7 +28,7 @@ instasplat doctor
 
 What the script does:
 
-1. `brew install ffmpeg exiftool colmap git`
+1. `brew install ffmpeg exiftool colmap git` (**COLMAP ≥ 4.1** for EQUIRECTANGULAR)
 2. `npm i -g @playcanvas/splat-transform`
 3. Create `.venv` and `pip install -e ".[gui,dev]"` (includes **torch**)
 4. Run `instasplat setup` / `doctor`
@@ -49,6 +49,16 @@ instasplat doctor             # stage readiness + MPS report
 
 If Apple Silicon shows PyTorch **without MPS**, install the official wheel from
 [pytorch.org](https://pytorch.org), then re-check with `doctor`.
+
+If `doctor` reports COLMAP without **EQUIRECTANGULAR**, upgrade:
+
+```bash
+brew update && brew upgrade colmap
+instasplat doctor   # sfm / mac_long_360 / equirectangular_sfm should be yes
+```
+
+InstaSplat uses full 360 panoramas for SfM and training; older COLMAP builds
+are not silently downgraded to cubemap faces.
 
 ## Manual install (equivalent)
 

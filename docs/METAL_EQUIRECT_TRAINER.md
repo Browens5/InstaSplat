@@ -84,7 +84,7 @@ train:
   viewer_every: 100        # async subsampled live.ply for GUI viewer
   lr: 0.01
   with_eval3d: true
-  composite: oit           # oit (fast vectorized) | tile
+  composite: metal         # metal (fused forward) | oit (torch) | tile
   sh_warmup_steps: 500
   densify_every: 200
 ```
@@ -95,10 +95,12 @@ interval. The live viewer reloads a **subsampled** `live.ply` every
 
 ### Speed path (Mac)
 
-- **Vectorized OIT** — batched soft splat via `index_add` (no per-Gaussian Python / GPU syncs)
+- **Fused Metal soft-OIT** (`composite: metal`) — Metal forward + torch backward;
+  pooled shared MTLBuffers (one D2H / one H2D per step); CPU reference mirrors
+  the kernel when PyObjC/metallib is unavailable
+- **Vectorized torch OIT** (`composite: oit`) — batched soft splat via `index_add`
 - **View cache** — decode panoramas once into RAM/MPS
 - **Resolution schedule** — half-res / large tiles early → full-res / fine tiles late
-- **Metal fused soft-OIT** — optional metallib + PyObjC dispatch with STE grads
 - **Async live preview** — subsampled PLY so training is not blocked by export
 
 ## Device policy
@@ -107,7 +109,7 @@ interval. The live viewer reloads a **subsampled** `live.ply` every
 |--------|----------|
 | Apple Silicon + MPS | Default training device (all Gaussian params on MPS) |
 | CPU | Auto-fallback if an MPS probe forward fails; also CI |
-| Metal metallib | Soft-OIT kernels; PyObjC dispatch when available; else torch OIT |
+| Metal metallib | Soft-OIT kernels via PyObjC; else CPU-ref fused forward |
 
 Covariance transforms use batched matmul (`R Σ Rᵀ`), not `einsum`, to avoid
 PyTorch MPS “Placeholder storage has not been allocated” crashes.
@@ -120,5 +122,7 @@ Cloud CUDA **gsplat 3DGUT** remains optional for scale (`cloud_job.json`).
 2. ~~Tile / OIT composite, eval3d, MCMC densify, SH warmup~~
 3. ~~Previews, heartbeat, `train-equirect`, images.bin~~
 4. ~~Vectorized OIT, view cache, schedule, async live PLY~~
-5. ~~Fused Metal soft-OIT metallib (+ optional PyObjC STE)~~
-6. Tighter Metal↔MPS buffer sharing (avoid CPU round-trip in STE)
+5. ~~Fused Metal soft-OIT metallib (+ optional PyObjC)~~
+6. ~~Metal-first composite (`composite: metal`) with torch backward~~
+7. ~~Pooled MTL shared buffers (one D2H/H2D per step, no numpy round-trip)~~
+8. True zero-copy MPS↔MTLBuffer (PyTorch MPS storage interop) when exposed

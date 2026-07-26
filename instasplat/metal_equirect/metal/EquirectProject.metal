@@ -89,9 +89,10 @@ kernel void soft_oit_accumulate(
     if (!(r > 0.5f)) return;
 
     float4 cp = cov2d_pack[id];
-    float a = cp.x;
+    // Symmetrize + eps toward SPD (parity with torch / CPU reference)
+    float a = cp.x + 1e-4f;
     float b01 = cp.y;
-    float c = cp.z;
+    float c = cp.z + 1e-4f;
     float det = a * c - b01 * b01;
     if (det < 1e-12f) return;
     float inv00 = c / det;

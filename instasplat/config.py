@@ -178,7 +178,7 @@ class TrainConfig:
     sh_degree: int = 1
     lr: float = 0.01
     with_eval3d: bool = True
-    composite: str = "oit"  # oit (fast vectorized) | tile
+    composite: str = "oit"  # metal | oit | tile
     sh_warmup_steps: int = 500
     densify_every: int = 200
     # Cap on Gaussian count (init + densify)
@@ -286,7 +286,7 @@ class PipelineConfig:
         self.train.export_every = 500
         self.train.max_gaussians = 40_000
         self.train.viewer_every = 100
-        self.train.composite = "oit"
+        self.train.composite = "metal"
         self.train.backend = "metal_equirect"
         self.export.formats = ["ply", "sog", "spz"]
         self.export.min_opacity = 0.05
@@ -447,7 +447,7 @@ train:
   viewer_every: 100         # async subsampled live.ply for GUI viewer
   lr: 0.01
   with_eval3d: true
-  composite: oit            # oit (fast vectorized) | tile
+  composite: metal          # metal (fused) | oit (torch) | tile
   sh_warmup_steps: 500
   densify_every: 200
 
@@ -525,7 +525,7 @@ train:
   max_gaussians: 40000
   viewer_every: 100
   with_eval3d: true
-  composite: oit
+  composite: metal
 
 export:
   formats: [ply, sog, spz]

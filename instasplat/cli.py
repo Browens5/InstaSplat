@@ -484,7 +484,7 @@ def train_equirect_cmd(
     job: Path = typer.Option(..., "--job", "-j", help="Job folder with equirect frames + SfM"),
     steps: int | None = typer.Option(None, help="Override train.total_steps"),
     max_resolution: int | None = typer.Option(None, help="Equirect train width"),
-    composite: str = typer.Option("tile", help="tile | oit"),
+    composite: str = typer.Option("metal", help="metal | oit | tile"),
     no_eval3d: bool = typer.Option(False, "--no-eval3d", help="Disable 3D response term"),
     dry_run: bool = typer.Option(False, help="Load dataset only"),
 ) -> None:

@@ -283,12 +283,24 @@ def train_equirect(
         status = metal_status()
     if log:
         log.info("metal_runtime: %s", status)
+        if composite == "metal":
+            if status.get("dispatch"):
+                log.info(
+                    "Fused Metal composite enabled (shared_buffers=%s); "
+                    "torch OIT for backward",
+                    bool(status.get("shared_buffers")),
+                )
+            else:
+                log.info(
+                    "composite=metal requested but Metal dispatch unavailable; "
+                    "using vectorized torch OIT"
+                )
 
     target_sh = clamp_sh_degree(sh_degree)
     max_gaussians = max(1_000, int(max_init_points))
     export_every = max(0, int(export_every))
     viewer_every = max(0, int(viewer_every))
-    composite = composite if composite in {"tile", "oit"} else "oit"
+    composite = composite if composite in {"tile", "oit", "metal"} else "oit"
 
     model = _build_model(
         dataset,

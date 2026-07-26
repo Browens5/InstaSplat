@@ -1,8 +1,10 @@
-# Feasibility — Insta360 → metric Gaussian splat on Mac
+# Feasibility — full Mac 360° video → splat pipeline
+
+Companion to **[MAC_360_PIPELINE.md](MAC_360_PIPELINE.md)** (need + architecture).
 
 ## Verdict
 
-**Feasible as a local Mac application**, with one hard caveat: **high-quality INSV stitching is not natively available via Insta360 MediaSDK on macOS**. Everything after a stitched equirectangular MP4 (frames, YOLO masks, COLMAP, metal_equirect, splat-transform) runs well on Apple Silicon. For a polished product, treat stitching as either **Studio-assisted** or **cloud/Linux MediaSDK**.
+**Feasible as a local Mac application**, with one hard caveat: **high-quality INSV stitching is not natively available via Insta360 MediaSDK on macOS**. Everything after a stitched equirectangular MP4 (frames, YOLO masks, COLMAP, metal_equirect, splat-transform, tiled merge) runs well on Apple Silicon. For a polished product, treat stitching as either **Studio-assisted** or **cloud/Linux MediaSDK**.
 
 ## Stage-by-stage
 

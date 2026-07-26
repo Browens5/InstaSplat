@@ -1,7 +1,10 @@
 # Best local Mac pipeline: long 360 → tiled splat
 
-This is InstaSplat’s recommended **local Apple Silicon** path for long
-Insta360 captures. It does **not** require CUDA, LingBot-Map, or MediaSDK.
+This is the **tiled product path** inside InstaSplat’s full Mac
+360° video → splat pipeline. For why that pipeline exists and how it is
+built end to end, see **[MAC_360_PIPELINE.md](MAC_360_PIPELINE.md)**.
+
+It does **not** require CUDA, LingBot-Map, or MediaSDK.
 
 ```text
 Studio equirect MP4 (+ sibling INSV / gyro+gps CSV)
@@ -137,7 +140,8 @@ Start with defaults from `enable_mac_long_360_defaults()`.
 
 ## See also
 
-- [METAL_SPLAT_WORKFLOW.md](METAL_SPLAT_WORKFLOW.md) — full metal splat process
+- [MAC_360_PIPELINE.md](MAC_360_PIPELINE.md) — need + full pipeline architecture
+- [METAL_SPLAT_WORKFLOW.md](METAL_SPLAT_WORKFLOW.md) — runbook
 - [LARGE_8K.md](LARGE_8K.md) — tile/align details
 - [CAPTURE_GUIDELINES.md](CAPTURE_GUIDELINES.md) — walk slow, overlap, avoid crowds
 - [SETUP_MACOS.md](SETUP_MACOS.md) — one-shot install

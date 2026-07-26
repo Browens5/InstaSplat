@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "instasplat"
 version = "0.1.0"
-description = "Turn Insta360 360° video into navigable 3D Gaussian splats on a Mac"
+description = "Full Mac pipeline: Insta360 360° video → navigable 3D Gaussian splat"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

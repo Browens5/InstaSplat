@@ -69,10 +69,13 @@ Setup finished.
 Activate the venv (new shells):
   source $ROOT/.venv/bin/activate
 
-Read the metal splat workflow:
+Why / how the full Mac 360→splat pipeline works:
+  docs/MAC_360_PIPELINE.md
+
+Day-to-day runbook:
   docs/METAL_SPLAT_WORKFLOW.md
 
-Run a long 360 job:
+Run the full tiled pipeline:
   instasplat mac-360 -i ./capture_equirect.mp4 -o ./runs -n walk
 
 Or open the GUI:

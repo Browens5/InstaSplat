@@ -1,6 +1,8 @@
 # Cloud & hybrid processing options
 
-InstaSplat is designed **local-first** on macOS. Use cloud when stitching, SfM, or training exceeds laptop resources, or when you need official MediaSDK.
+InstaSplat’s **full Mac pipeline** is local-first
+([MAC_360_PIPELINE.md](MAC_360_PIPELINE.md)). Use cloud when stitching, SfM, or
+training exceeds laptop resources, or when you need official MediaSDK.
 
 ## What to run where
 

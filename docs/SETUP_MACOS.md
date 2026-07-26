@@ -1,9 +1,10 @@
-# macOS setup
+# macOS setup — install the 360 → splat pipeline
 
-Install everything needed for the **metal_equirect** pipeline (ffmpeg, COLMAP,
-PyTorch MPS, splat-transform, optional GUI).
+Install the tools InstaSplat needs to run the **full Mac pipeline**
+(ffmpeg, COLMAP, PyTorch MPS, splat-transform, optional GUI).
 
-For the full process after install, read **[METAL_SPLAT_WORKFLOW.md](METAL_SPLAT_WORKFLOW.md)**.
+- Why / architecture: **[MAC_360_PIPELINE.md](MAC_360_PIPELINE.md)**  
+- After install, runbook: **[METAL_SPLAT_WORKFLOW.md](METAL_SPLAT_WORKFLOW.md)**
 
 ## Requirements
 
@@ -22,6 +23,8 @@ cd InstaSplat
 source .venv/bin/activate
 instasplat doctor
 ```
+
+`doctor` should report **mac_long_360 = yes** when the pipeline can run locally.
 
 What the script does:
 
@@ -57,13 +60,14 @@ pip install -e ".[gui,dev]"
 instasplat doctor
 ```
 
-## Capture input
+## Capture input (pipeline expects this)
 
 1. Export **equirectangular** MP4 from Insta360 Studio  
 2. Keep sibling `.insv` (or `gyro.csv` / `gps.csv`) beside it  
 
 ## Next
 
-- Workflow: [METAL_SPLAT_WORKFLOW.md](METAL_SPLAT_WORKFLOW.md)  
+- Create / understand the pipeline: [MAC_360_PIPELINE.md](MAC_360_PIPELINE.md)  
+- Run it: [METAL_SPLAT_WORKFLOW.md](METAL_SPLAT_WORKFLOW.md)  
 - Long 8K tiled jobs: [MAC_LONG_360.md](MAC_LONG_360.md)  
 - GUI: `instasplat gui`  

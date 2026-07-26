@@ -41,6 +41,7 @@ def test_run_setup_dry_run_does_not_require_brew() -> None:
 def test_repo_root_points_at_workspace() -> None:
     root = repo_root()
     assert (root / "pyproject.toml").is_file()
+    assert (root / "docs" / "MAC_360_PIPELINE.md").is_file()
     assert (root / "docs" / "METAL_SPLAT_WORKFLOW.md").is_file()
 
 
@@ -50,4 +51,5 @@ def test_setup_macos_script_exists() -> None:
     body = script.read_text(encoding="utf-8")
     assert "pip install" in body
     assert "instasplat setup" in body
+    assert "MAC_360_PIPELINE" in body
     assert "METAL_SPLAT_WORKFLOW" in body

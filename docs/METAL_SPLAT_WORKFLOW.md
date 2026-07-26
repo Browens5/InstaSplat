@@ -1,21 +1,15 @@
-# Metal splat workflow
+# Running the Mac 360 → splat pipeline
 
-End-to-end guide for InstaSplat’s **metal_equirect** pipeline on Apple Silicon:
-from Studio equirect video → COLMAP → native 360 Gaussian training → export.
+Operational runbook: install, capture, run, monitor, tune, and troubleshoot.
 
-This is the **only** training path. There is no Brush/OpenSplat backend.
+For **why this pipeline exists** and **how it is architected**, read
+**[MAC_360_PIPELINE.md](MAC_360_PIPELINE.md)** first.
+
+Training backend is **metal_equirect** only (full equirect + COLMAP on MPS/Metal).
 
 ---
 
-## 1. What “metal splat” means here
-
-| Term | Meaning |
-|------|---------|
-| **Equirect frames** | Full 360×180 panoramas (`01_frames/equirect/`) |
-| **Cubemap SfM** | COLMAP runs on perspective faces for reliable Mac reconstruction |
-| **Pose lift** | `{stem}_front` COLMAP poses → one pose per panorama for training |
-| **metal_equirect** | PyTorch MPS trainer with 3DGUT-style Unscented Transform projection |
-| **Exports** | `scene.ply` (+ sog/spz via splat-transform) |
+## 1. Pipeline at a glance
 
 ```mermaid
 flowchart TB
@@ -30,52 +24,58 @@ flowchart TB
   style G fill:#dceee4,stroke:#1f6f4a
 ```
 
-Deep trainer internals: [METAL_EQUIRECT_TRAINER.md](METAL_EQUIRECT_TRAINER.md).  
-Long / 8K tiling: [MAC_LONG_360.md](MAC_LONG_360.md).
+| Term | Meaning |
+|------|---------|
+| **Equirect frames** | Full 360×180 panoramas (`01_frames/equirect/`) |
+| **Cubemap SfM** | COLMAP on perspective faces (reliable on Mac) |
+| **Pose lift** | `{stem}_front` COLMAP poses → one pose per panorama |
+| **metal_equirect** | PyTorch MPS trainer with 3DGUT-style UT projection |
+| **Exports** | `scene.ply` (+ sog/spz via splat-transform) |
+
+Trainer internals: [METAL_EQUIRECT_TRAINER.md](METAL_EQUIRECT_TRAINER.md).  
+Tiling: [MAC_LONG_360.md](MAC_LONG_360.md).
 
 ---
 
 ## 2. Install (once)
 
-### Recommended (one script)
+### Recommended
 
 ```bash
 git clone https://github.com/Browens5/InstaSplat.git
 cd InstaSplat
-./scripts/setup_macos.sh          # brew + npm + .venv + pip -e '.[gui,dev]'
+./scripts/setup_macos.sh
 source .venv/bin/activate
 instasplat doctor                 # mac_long_360 should be yes
 ```
 
-Options:
-
 | Env | Effect |
 |-----|--------|
-| `WITH_GUI=0` | Skip PySide6 (`pip install -e '.[dev]'` only) |
+| `WITH_GUI=0` | Skip PySide6 |
 | `SKIP_BREW=1` | Do not run Homebrew |
 | `SKIP_PIP=1` | Do not create venv / pip install |
 
-### Equivalent manual steps
+### Manual equivalent
 
 ```bash
 brew install ffmpeg exiftool colmap git
 npm i -g @playcanvas/splat-transform
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[gui,dev]"
-instasplat setup --verify         # check tools + Python side
+instasplat setup --verify
 instasplat doctor
 ```
 
-### Quick checks
-
 ```bash
-instasplat setup                  # can install missing brew/npm tools
+instasplat setup                  # may install missing brew/npm tools
 instasplat setup --verify         # check only
-instasplat doctor                 # stage readiness table + MPS report
+instasplat doctor                 # stage readiness + MPS
 ```
 
-**Apple Silicon:** if `doctor` shows PyTorch without MPS, install the official
-MPS wheel from [pytorch.org](https://pytorch.org), then re-run `doctor`.
+If Apple Silicon shows PyTorch without MPS, install the wheel from
+[pytorch.org](https://pytorch.org), then re-run `doctor`.
+
+More: [SETUP_MACOS.md](SETUP_MACOS.md).
 
 ---
 
@@ -103,7 +103,7 @@ Tiled mode splits time into overlapping chunks, trains each with metal_equirect
 
 ---
 
-## 5. Stage-by-stage process
+## 5. Stage-by-stage
 
 ### A. Tiled long-360 (default product path)
 
@@ -121,9 +121,9 @@ instasplat mac-360 -i ./capture_equirect.mp4 -o ./runs -n walk_360
 | 6 | `merge_chunks` | splat-transform merge + prune | `11_merged/scene_merged.ply` |
 | 7 | `package` | quality + LOD + cloud handoff | `quality.json`, `cloud_job.json`, `06_export/` |
 
-Inside each tile’s **train** step (metal_equirect):
+Inside each tile’s **train** step:
 
-1. Load equirect frames + masks for that chunk  
+1. Load equirect frames + masks  
 2. Lift COLMAP cubemap poses (`*_front` → panorama)  
 3. Init Gaussians from sparse points  
 4. Optimize with UT equirect rasterizer (MPS)  
@@ -131,13 +131,12 @@ Inside each tile’s **train** step (metal_equirect):
 
 ```text
 10_chunks/chunk_000/
-  01_frames/equirect/     ← panoramas for this tile
+  01_frames/equirect/
   02_masks/equirect/
   03_sfm/images/          ← cubemap faces for COLMAP
-  03_sfm/sparse/0/        ← cameras / points
+  03_sfm/sparse/0/
   05_train/exports/
     scene.ply
-    equirect_*.ply
     previews/step_*.jpg
     train_heartbeat.json
 ```
@@ -149,17 +148,11 @@ instasplat run -i ./short_equirect.mp4 -o ./runs -n short \
   --stages ingest,extract,mask,sfm,scale,refine,train,export,package
 ```
 
-Same train logic; no chunk plan/merge.
-
 ### C. Resume / train only
 
 ```bash
-# Continue a job (skips finished tiles when skip_existing=true)
 instasplat run --job ./runs/walk_360 --only process_chunks
-
-# Re-train after SfM already exists
 instasplat train-equirect -j ./runs/walk_360 --steps 8000
-# or
 instasplat run --job ./runs/walk_360 --only train
 ```
 
@@ -172,29 +165,28 @@ GUI: **Open previous run…** → check stages → **Continue run**.
 | Signal | Where |
 |--------|--------|
 | CLI / GUI log | Stage messages + loss / Gaussian count |
-| Live 3D viewer | Sparse COLMAP cloud during SfM; splat centers when PLYs appear |
-| Artifacts tab | Frames, masks, models, PLYs, **preview** JPEGs |
-| Heartbeat | `05_train/exports/train_heartbeat.json` (step, loss, n_gaussians) |
-| Previews | `05_train/exports/previews/step_XXXXXX.jpg` (equirect renders) |
+| Live 3D viewer | Sparse COLMAP during SfM; splat centers when PLYs appear |
+| Artifacts tab | Frames, masks, models, PLYs, preview JPEGs |
+| Heartbeat | `05_train/exports/train_heartbeat.json` |
+| Previews | `05_train/exports/previews/step_XXXXXX.jpg` |
 
 Pause in the GUI freezes the pipeline at stage checkpoints.
 
 ---
 
-## 7. Outputs to open / share
+## 7. Outputs
 
 ```text
 runs/walk_360/
-  06_export/scene.ply      ← primary splat
+  06_export/scene.ply
   06_export/scene.sog
   06_export/scene.spz
-  11_merged/…              ← tiled merge products
+  11_merged/…
   quality.json
-  cloud_job.json           ← optional CUDA 3DGUT handoff
+  cloud_job.json
 ```
 
-Viewers: PlayCanvas SuperSplat, MetalSplatter, and other Gaussian viewers that
-read PLY/SOG/SPZ.
+Viewers: PlayCanvas SuperSplat, MetalSplatter, and other Gaussian viewers.
 
 ---
 
@@ -202,27 +194,27 @@ read PLY/SOG/SPZ.
 
 ```yaml
 train:
-  backend: metal_equirect   # sole backend
+  backend: metal_equirect
   total_steps: 15000
-  max_resolution: 1024      # equirect width (height = width/2)
+  max_resolution: 1024
   export_every: 2000
   sh_degree: 1
   lr: 0.01
-  with_eval3d: true         # 3DGUT-style 3D response
-  composite: tile           # tile (quality) | oit (faster)
+  with_eval3d: true
+  composite: tile           # tile | oit
   sh_warmup_steps: 500
   densify_every: 200
 
 metal:
   prefer_metal: true
-  serialize_train: true     # one tile train at a time (MPS memory)
+  serialize_train: true     # one tile at a time on MPS
 ```
 
 | Goal | Suggestion |
 |------|------------|
-| Faster laptop iterate | `total_steps: 8000`, `max_resolution: 768`, `composite: oit` |
+| Faster iterate | `total_steps: 8000`, `max_resolution: 768`, `composite: oit` |
 | Higher quality | `total_steps: 20000`, `max_resolution: 1280`, `sfm.face_resolution: 1280` |
-| Less VRAM pressure | keep `serialize_train: true`, lower `max_resolution` |
+| Less memory | keep `serialize_train: true`, lower `max_resolution` |
 
 Starter YAML: `examples/large8k.example.yaml`, `instasplat init-config --large-8k`.
 
@@ -232,38 +224,27 @@ Starter YAML: `examples/large8k.example.yaml`, `instasplat init-config --large-8
 
 | Symptom | Fix |
 |---------|-----|
-| `doctor` train = no | `pip install -e .` / ensure torch imports; MPS wheel on Apple Silicon |
-| Preflight: no trainer | Same as above (PyTorch required) |
-| Empty COLMAP / SfM fail | Use `perspective_cubemap`; for tiled jobs run `process_chunks`, not top-level `sfm` |
-| Train: no equirect views | Ensure `01_frames/equirect` exists and COLMAP images are `{stem}_front.jpg` or native names |
-| MPS OOM mid-train | Lower `train.max_resolution` / `total_steps`; keep `serialize_train: true` |
-| YOLO MPS crash | Pipeline auto-falls back to CPU for masks |
-| Merge blocked | Fix failed tiles or pass `--allow-partial-merge` |
+| `doctor` train = no | `pip install -e .`; MPS wheel on Apple Silicon |
+| Preflight: no trainer | Same — PyTorch required |
+| Empty COLMAP / SfM fail | Use `perspective_cubemap`; tiled jobs use `process_chunks`, not top-level `sfm` |
+| Train: no equirect views | Need `01_frames/equirect` and `{stem}_front` (or native) COLMAP names |
+| MPS OOM mid-train | Lower `max_resolution` / `total_steps`; keep `serialize_train` |
+| YOLO MPS crash | Pipeline falls back to CPU for masks |
+| Merge blocked | Fix failed tiles or `--allow-partial-merge` |
 
 ---
 
-## 10. Command cheat sheet
+## 10. Cheat sheet
 
 ```bash
-# Install
 ./scripts/setup_macos.sh && source .venv/bin/activate
-
-# Health
 instasplat setup
 instasplat doctor
-
-# Full tiled metal splat
 instasplat mac-360 -i ./capture_equirect.mp4 -o ./runs -n walk
-
-# GUI
 instasplat gui
-
-# Sections
 instasplat stages --mode tiled
 instasplat run --job ./runs/walk --only train
 instasplat train-equirect -j ./runs/walk --steps 8000
-
-# Validate packaging
 instasplat validate --job ./runs/walk
 ```
 
@@ -271,8 +252,9 @@ instasplat validate --job ./runs/walk
 
 ## See also
 
+- [MAC_360_PIPELINE.md](MAC_360_PIPELINE.md) — need + how the pipeline is built  
 - [SETUP_MACOS.md](SETUP_MACOS.md) — install details  
-- [MAC_LONG_360.md](MAC_LONG_360.md) — tiled defaults & safety rails  
-- [METAL_EQUIRECT_TRAINER.md](METAL_EQUIRECT_TRAINER.md) — rasterizer / UT architecture  
+- [MAC_LONG_360.md](MAC_LONG_360.md) — tiled defaults  
+- [METAL_EQUIRECT_TRAINER.md](METAL_EQUIRECT_TRAINER.md) — rasterizer / UT  
 - [LARGE_8K.md](LARGE_8K.md) — chunk tuning  
-- [CLOUD.md](CLOUD.md) — optional CUDA 3DGUT scale path  
+- [CLOUD.md](CLOUD.md) — optional CUDA path  

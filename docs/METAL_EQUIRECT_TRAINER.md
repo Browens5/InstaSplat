@@ -1,11 +1,14 @@
 # metal_equirect trainer (architecture)
 
-Technical reference for InstaSplat’s sole Gaussian trainer. For install and
-end-to-end steps, use **[METAL_SPLAT_WORKFLOW.md](METAL_SPLAT_WORKFLOW.md)**.
+Technical reference for the **full-360 training stage** inside InstaSplat’s Mac
+pipeline. Pipeline need & architecture: **[MAC_360_PIPELINE.md](MAC_360_PIPELINE.md)**.
+Runbook: **[METAL_SPLAT_WORKFLOW.md](METAL_SPLAT_WORKFLOW.md)**.
 
-## Role
+## Role in the full pipeline
 
-`metal_equirect` optimizes 3D Gaussians against **full equirectangular** frames
+Without a trainer that can supervise **entire panoramas**, a Mac 360 → splat
+path collapses to pinhole crops and loses most of each frame. `metal_equirect`
+is that stage: it optimizes 3D Gaussians against full equirectangular views
 using COLMAP poses. Projection uses a **3DGUT-style Unscented Transform**
 (nonlinear camera), inspired by NVIDIA 3DGUT / [gsplat](https://github.com/nerfstudio-project/gsplat).
 

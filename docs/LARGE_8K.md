@@ -1,6 +1,9 @@
 # Large 8K tiled Gaussian splat pipeline
 
-InstaSplat can reconstruct **long 8K@30fps** captures by auto-chunking the
+Tuning guide for the **long-walk** half of InstaSplat’s full Mac 360 → splat
+pipeline ([MAC_360_PIPELINE.md](MAC_360_PIPELINE.md)).
+
+InstaSplat reconstructs **long 8K@30fps** captures by auto-chunking the
 timeline, sampling denser frames on turns (gyro), reconstructing each tile,
 aligning tiles with **GPS + gyro**, and merging splats — with **Metal-first**
 defaults on Apple Silicon.

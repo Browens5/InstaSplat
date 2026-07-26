@@ -146,7 +146,7 @@ def _mark_ready(report: SetupReport) -> None:
         "instasplat doctor",
         "instasplat gui",
         "instasplat mac-360 -i ./capture_equirect.mp4 -o ./runs -n walk",
-        "# Full metal splat workflow: docs/METAL_SPLAT_WORKFLOW.md",
+        "# Full Mac 360→splat pipeline: docs/MAC_360_PIPELINE.md",
     ]
 
 

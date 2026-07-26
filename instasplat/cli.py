@@ -110,7 +110,7 @@ def doctor(
             "`pip install -e .` (Apple Silicon: MPS wheel from pytorch.org)."
         )
     console.print(
-        "[cyan]Tip:[/cyan] see docs/METAL_SPLAT_WORKFLOW.md — then "
+        "[cyan]Tip:[/cyan] docs/MAC_360_PIPELINE.md (why + architecture), then "
         "`instasplat mac-360 -i ./capture_equirect.mp4 -o ./runs -n walk`"
     )
 

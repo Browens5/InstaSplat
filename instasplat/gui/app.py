@@ -597,6 +597,13 @@ class MainWindow(QMainWindow):
         self.export_every.setValue(500)
         self.export_every.setToolTip("Write equirect_XXXXXX.ply checkpoints every N steps")
         train_form.addRow("PLY export every", self.export_every)
+        self.resolution_schedule_cb = QCheckBox("Coarse→mid→fine resolution schedule")
+        self.resolution_schedule_cb.setChecked(False)
+        self.resolution_schedule_cb.setToolTip(
+            "Optional progressive render schedule: half-res early, then ¾, then full. "
+            "Off by default (always full resolution)."
+        )
+        train_form.addRow(self.resolution_schedule_cb)
         layout.addWidget(train_box)
 
         # —— Export ——
@@ -879,6 +886,9 @@ class MainWindow(QMainWindow):
         self.sh_degree.setValue(max(0, min(int(cfg.train.sh_degree), 3)))
         exp_every = int(cfg.train.export_every)
         self.export_every.setValue(max(50, min(exp_every, 1000)))
+        self.resolution_schedule_cb.setChecked(
+            bool(getattr(cfg.train, "resolution_schedule", False))
+        )
         wanted = set(cfg.export.formats or [])
         for fmt, cb in self.format_cbs.items():
             cb.setChecked(fmt in wanted)
@@ -1065,6 +1075,7 @@ class MainWindow(QMainWindow):
         cfg.train.sh_degree = int(self.sh_degree.value())
         cfg.train.export_every = int(self.export_every.value())
         cfg.train.viewer_every = 100
+        cfg.train.resolution_schedule = bool(self.resolution_schedule_cb.isChecked())
         cfg.export.formats = formats  # type: ignore[assignment]
         return cfg
 

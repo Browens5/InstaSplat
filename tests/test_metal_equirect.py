@@ -214,6 +214,48 @@ def test_train_smoke_exports_ply_and_preview(tmp_path: Path) -> None:
     assert events[-1].get("width_scale") == 1.0
 
 
+def test_schedule_coarse_to_fine() -> None:
+    from instasplat.metal_equirect.schedule import schedule_at_step
+
+    early = schedule_at_step(1, 1000)
+    mid = schedule_at_step(500, 1000)
+    late = schedule_at_step(900, 1000)
+    assert early.phase == "coarse" and early.width_scale == 0.5 and early.tile_size == 64
+    assert mid.phase == "mid" and mid.width_scale == 0.75
+    assert late.phase == "fine" and late.width_scale == 1.0 and late.tile_size == 16
+    assert early.max_per_tile >= late.max_per_tile
+
+
+def test_train_optional_resolution_schedule(tmp_path: Path) -> None:
+    """When enabled, early steps report coarse phase and scaled resolution."""
+    paths = _write_mini_job(tmp_path / "job", n_pts=16)
+    ds = load_equirect_dataset(paths, paths.colmap_model, max_width=64)
+    for v in ds.views:
+        v.width, v.height = 32, 16
+    events: list[dict] = []
+    train_equirect(
+        ds,
+        tmp_path / "exports",
+        total_steps=10,
+        export_every=0,
+        viewer_every=0,
+        densify_every=0,
+        sh_degree=0,
+        max_gaussians_render=16,
+        max_init_points=16,
+        prefer_mps=False,
+        preview_every=0,
+        use_resolution_schedule=True,
+        on_progress=events.append,
+        log=None,
+    )
+    assert events
+    assert events[0]["phase"] == "coarse"
+    assert events[0]["width_scale"] == 0.5
+    assert events[-1]["phase"] == "fine"
+    assert events[-1]["width_scale"] == 1.0
+
+
 def test_densify_clone_split_prune() -> None:
     from instasplat.metal_equirect.optim_utils import build_optimizers
 

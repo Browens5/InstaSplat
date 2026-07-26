@@ -192,6 +192,8 @@ class TrainConfig:
     live_max_points: int = 100_000
     # Periodic opacity reset (3DGS-style); 0 disables
     opacity_reset_every: int = 3_000
+    # Optional coarse→mid→fine render schedule (half-res early → full late)
+    resolution_schedule: bool = False
 
 
 @dataclass
@@ -454,6 +456,7 @@ train:
   max_gaussians: 40000      # per tile/job; GUI allows up to 30000000 (30M)
   viewer_every: 100         # async subsampled live.ply for SuperSplat GUI viewer
   live_max_points: 100000   # Gaussians in live.ply (opacity top-k)
+  resolution_schedule: false  # optional coarse→mid→fine render schedule
   lr: 0.01
   with_eval3d: true
   composite: metal          # metal (fused) | oit (torch) | tile
@@ -539,6 +542,7 @@ train:
   composite: metal
   densify_every: 100
   opacity_reset_every: 3000
+  resolution_schedule: false
 
 export:
   formats: [ply, sog, spz]

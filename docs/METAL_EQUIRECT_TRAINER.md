@@ -88,6 +88,7 @@ train:
   sh_warmup_steps: 500
   densify_every: 100
   opacity_reset_every: 3000
+  resolution_schedule: false  # optional coarse→mid→fine
 ```
 
 GUI **Training** group exposes steps and max Gaussians in **thousands**
@@ -114,7 +115,9 @@ asynchronously). COLMAP sparse previews still use the OpenGL point cloud path.
   pooled shared MTLBuffers (one D2H / one H2D per step); CPU reference mirrors
   the kernel when PyObjC/metallib is unavailable
 - **Vectorized torch OIT** (`composite: oit`) — batched soft splat via `index_add`
-- **View cache** — decode panoramas once into RAM/MPS (full resolution)
+- **View cache** — decode panoramas once into RAM/MPS
+- **Optional resolution schedule** (`train.resolution_schedule`) — coarse→mid→fine
+  (half-res early → full late); off by default
 - **Async live preview** — SuperSplat-embedded `live.ply` (≤`live_max_points`) so training is not blocked by export
 
 ## Device policy

@@ -61,9 +61,12 @@ def test_build_config_includes_train_options(tmp_path) -> None:
     assert cfg.train.sh_degree == 2
     assert cfg.train.export_every == 200
     assert cfg.train.viewer_every == 100
-    win._apply_config_to_form(cfg)
-    assert win.steps.value() == 8
-    assert win.max_gaussians.value() == 25
+    assert cfg.train.resolution_schedule is False
+    win.resolution_schedule_cb.setChecked(True)
+    cfg2 = win._build_config()
+    assert cfg2.train.resolution_schedule is True
+    win._apply_config_to_form(cfg2)
+    assert win.resolution_schedule_cb.isChecked()
     win.close()
     del win
     _ = app

@@ -89,6 +89,11 @@ def set_force_reference(enabled: bool = True) -> None:
     _ACTIVE = "ref_oit" if enabled else "torch_oit"
 
 
+def force_reference_enabled() -> bool:
+    """True when tests forced the CPU reference forward path."""
+    return bool(_FORCE_REF)
+
+
 def metal_raster_available() -> bool:
     """True when real Metal soft-OIT kernels can be dispatched."""
     return bool(_try_load_pipeline())
@@ -202,7 +207,8 @@ def soft_oit_forward_tensors(
     Tensor fused forward.
 
     On Metal: shared-buffer path (one copy in, one copy out, pooled MTLBuffers).
-    Else: CPU reference via numpy, then back to ``mean_2d.device``.
+    With ``set_force_reference(True)``: CPU reference (tests only).
+    Otherwise raises so callers can fall back to vectorized torch OIT.
     """
     global _ACTIVE
     pipe = _try_load_pipeline()
@@ -226,8 +232,14 @@ def soft_oit_forward_tensors(
                 "metal_oit_shared" if getattr(pipe, "shared_buffers", False) else "metal_oit"
             )
             return out, _ACTIVE
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RuntimeError(f"Metal soft-OIT dispatch failed: {exc}") from exc
+
+    if not _FORCE_REF:
+        raise RuntimeError(
+            "Fused Metal soft-OIT unavailable (no metallib/PyObjC dispatch). "
+            "Fall back to composite=oit."
+        )
 
     arrays = (
         mean_2d.detach().float().cpu().numpy(),

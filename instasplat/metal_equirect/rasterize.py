@@ -164,9 +164,10 @@ def rasterize_equirect(
     """
     Soft-alpha composite of Gaussians into an equirect RGB image (H, W, 3).
 
-    - ``metal`` — fused soft-OIT (Metal forward / CPU-ref fallback; torch backward)
-    - ``oit`` — vectorized torch soft-OIT; upgrades to ``metal`` when
-      ``prefer_metal`` and a Metal (or forced-ref) fused path is requested
+    - ``metal`` — fused soft-OIT when Metal dispatch is live (torch backward);
+      otherwise same as vectorized ``oit`` (never the slow Python CPU-ref)
+    - ``oit`` — vectorized torch soft-OIT; upgrades to Metal when
+      ``prefer_metal`` and metallib/PyObjC dispatch is available
     - ``tile`` — tiled soft-OIT with per-tile top-K
     """
     if R_w2c.device != means.device or R_w2c.dtype != means.dtype:
@@ -198,37 +199,34 @@ def rasterize_equirect(
     if with_eval3d:
         opac = (opac * _eval3d_response(means_cam, cov_cam, opacities)).clamp(0, 0.99)
 
-    use_fused = composite == "metal" or (
-        prefer_metal and composite == "oit" and means.device.type in {"mps", "cpu"}
-    )
-    # Only escalate oit→fused when real Metal is up, or composite explicitly metal.
-    if use_fused and composite != "metal":
+    # Fused Metal only when dispatch is live (or tests force CPU-ref).
+    # Never silently fall back to the slow Python soft_oit_ref in training.
+    use_fused = False
+    if composite in {"metal", "oit"} and (
+        composite == "metal" or prefer_metal
+    ):
         try:
-            from instasplat.metal_equirect.metal_runtime import metal_raster_available
+            from instasplat.metal_equirect.metal_runtime import (
+                force_reference_enabled,
+                fused_soft_oit,
+                metal_raster_available,
+            )
 
-            use_fused = metal_raster_available()
+            use_fused = metal_raster_available() or force_reference_enabled()
+            if use_fused:
+                return fused_soft_oit(
+                    mean_2d,
+                    cov_2d,
+                    radius,
+                    opac,
+                    colors,
+                    depth,
+                    valid,
+                    camera,
+                    footprint=_MAX_FOOTPRINT,
+                )
         except Exception:
             use_fused = False
-
-    if use_fused or composite == "metal":
-        try:
-            from instasplat.metal_equirect.metal_runtime import fused_soft_oit
-
-            return fused_soft_oit(
-                mean_2d,
-                cov_2d,
-                radius,
-                opac,
-                colors,
-                depth,
-                valid,
-                camera,
-                footprint=_MAX_FOOTPRINT,
-            )
-        except Exception:
-            if composite == "metal":
-                # Explicit metal request: fall through to torch OIT rather than crash.
-                pass
 
     if composite == "tile":
         return _composite_tiled(
@@ -243,6 +241,7 @@ def rasterize_equirect(
             tile_size=tile_size,
             max_per_tile=max_per_tile,
         )
+    # metal-without-dispatch and oit both use vectorized torch OIT
     return _composite_oit_batched(
         mean_2d, cov_2d, radius, opac, colors, depth, valid, camera
     )

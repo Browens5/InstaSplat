@@ -284,12 +284,17 @@ def train_equirect(
     if log:
         log.info("metal_runtime: %s", status)
         if composite == "metal":
-            log.info(
-                "Fused composite path enabled (forward=%s, shared_buffers=%s); "
-                "torch OIT for backward",
-                "metal" if status.get("dispatch") else "cpu_ref",
-                bool(status.get("shared_buffers")),
-            )
+            if status.get("dispatch"):
+                log.info(
+                    "Fused Metal composite enabled (shared_buffers=%s); "
+                    "torch OIT for backward",
+                    bool(status.get("shared_buffers")),
+                )
+            else:
+                log.info(
+                    "composite=metal requested but Metal dispatch unavailable; "
+                    "using vectorized torch OIT"
+                )
 
     target_sh = clamp_sh_degree(sh_degree)
     max_gaussians = max(1_000, int(max_init_points))

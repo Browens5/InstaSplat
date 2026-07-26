@@ -406,7 +406,7 @@ def test_host_shared_pool_grow_and_view() -> None:
 
 
 def test_fused_metal_composite_forward_and_backward() -> None:
-    """composite=metal uses fused path (CPU ref on Linux) with torch grads."""
+    """Forced CPU-ref fused path still produces finite grads (test-only)."""
     from instasplat.metal_equirect.metal_runtime import (
         active_composite_backend,
         set_force_reference,
@@ -446,6 +446,46 @@ def test_fused_metal_composite_forward_and_backward() -> None:
         assert torch.isfinite(means.grad).all()
     finally:
         set_force_reference(False)
+
+
+def test_metal_without_dispatch_uses_torch_oit() -> None:
+    """Without Metal/PyObjC, composite=metal must not use slow Python ref."""
+    from instasplat.metal_equirect.metal_runtime import (
+        active_composite_backend,
+        metal_raster_available,
+        set_force_reference,
+    )
+
+    set_force_reference(False)
+    if metal_raster_available():
+        return  # real Metal env — skip fallback assertion
+    cam = EquirectCamera(32, 16)
+    n = 8
+    means = (torch.randn(n, 3) * 0.2 + torch.tensor([0.0, 0.0, 2.0])).requires_grad_(
+        True
+    )
+    quats = torch.zeros(n, 4)
+    quats[:, 0] = 1.0
+    pred = rasterize_equirect(
+        means,
+        quats,
+        torch.full((n, 3), 0.05),
+        torch.full((n,), 0.5),
+        torch.zeros(n, 3),
+        torch.zeros(n, 0),
+        torch.eye(3),
+        torch.zeros(3),
+        cam,
+        sh_degree=0,
+        max_gaussians=n,
+        with_eval3d=False,
+        composite="metal",
+        prefer_metal=True,
+    )
+    assert pred.shape == (16, 32, 3)
+    assert active_composite_backend() != "ref_oit"
+    pred.mean().backward()
+    assert means.grad is not None and torch.isfinite(means.grad).all()
 
 
 def test_soft_oit_reference_matches_torch_oit_roughly() -> None:

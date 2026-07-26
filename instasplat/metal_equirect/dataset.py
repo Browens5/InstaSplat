@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
@@ -21,6 +21,9 @@ _FACE_RE = re.compile(
     r"^(?P<stem>.+)_(?P<face>front|right|back|left|up|down)\.(jpg|jpeg|png)$",
     re.IGNORECASE,
 )
+# Trailing frame index: e_000001 / frame_000001 / IMG_12 → 1 / 1 / 12
+_TRAILING_INDEX_RE = re.compile(r"(\d+)$")
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
 
 
 @dataclass
@@ -45,9 +48,43 @@ class EquirectDataset:
         return len(self.views)
 
 
+@dataclass
+class _ImageCatalog:
+    """Index of on-disk panoramas for fast / fuzzy COLMAP name resolution."""
+
+    files: list[Path] = field(default_factory=list)
+    by_basename: dict[str, Path] = field(default_factory=dict)
+    by_stem: dict[str, Path] = field(default_factory=dict)
+    by_index: dict[int, Path] = field(default_factory=dict)
+    ambiguous_indices: set[int] = field(default_factory=set)
+    sample_names: list[str] = field(default_factory=list)
+
+
 def _face_index(name: str) -> int | None:
     try:
         return FACE_NAMES.index(name.lower())
+    except ValueError:
+        return None
+
+
+def _strip_face_suffix(stem: str) -> str:
+    base = stem
+    lower = base.lower()
+    for face in FACE_NAMES:
+        suf = f"_{face}"
+        if lower.endswith(suf):
+            return base[: -len(suf)]
+    return base
+
+
+def _trailing_index(stem: str) -> int | None:
+    """Extract trailing integer from a frame stem (after dropping cubemap face)."""
+    base = _strip_face_suffix(stem)
+    m = _TRAILING_INDEX_RE.search(base)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
     except ValueError:
         return None
 
@@ -77,7 +114,7 @@ def _list_image_files(directory: Path) -> list[Path]:
         return []
     out: list[Path] = []
     for p in sorted(directory.iterdir()):
-        if p.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
+        if p.suffix.lower() not in _IMAGE_EXTS:
             continue
         # Skip broken symlinks
         if not p.exists():
@@ -111,22 +148,53 @@ def _image_search_dirs(paths: JobPaths, model_dir: Path) -> list[Path]:
     return out
 
 
-def _find_equirect_image(equirect_dir: Path, stem: str) -> Path | None:
-    for ext in (".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"):
-        p = equirect_dir / f"{stem}{ext}"
-        if p.exists():
-            return p
-    # Case-insensitive stem match (APFS usually OK; Linux CI is strict)
-    stem_l = stem.lower()
-    for p in _list_image_files(equirect_dir):
-        if p.stem.lower() == stem_l:
-            return p
-    return None
+def _build_image_catalog(dirs: list[Path]) -> _ImageCatalog:
+    """
+    Index panoramas by basename, stem, and unique trailing frame index.
+
+    Trailing-index match pairs COLMAP ``e_000001.jpg`` with on-disk
+    ``frame_000001.jpg`` (and the reverse) when the numeric suffix is unique.
+    """
+    cat = _ImageCatalog()
+    index_hits: dict[int, list[Path]] = {}
+    seen_resolved: set[Path] = set()
+
+    for d in dirs:
+        for p in _list_image_files(d):
+            try:
+                key = p.resolve()
+            except OSError:
+                key = p
+            if key in seen_resolved:
+                continue
+            seen_resolved.add(key)
+            cat.files.append(p)
+            cat.by_basename.setdefault(p.name.lower(), p)
+            cat.by_stem.setdefault(p.stem.lower(), p)
+            idx = _trailing_index(p.stem)
+            if idx is not None:
+                index_hits.setdefault(idx, []).append(p)
+
+    for idx, hits in index_hits.items():
+        # Same stem in multiple dirs (frames + images_equirect) is fine — pick one.
+        stems = {h.stem.lower() for h in hits}
+        if len(stems) == 1:
+            cat.by_index[idx] = hits[0]
+            continue
+        preferred = [h for h in hits if h.stem.lower().startswith("frame")]
+        pref_stems = {h.stem.lower() for h in preferred}
+        if len(pref_stems) == 1:
+            cat.by_index[idx] = preferred[0]
+        else:
+            # Distinct stems sharing an index (frame_1 vs shot_1) — do not guess
+            cat.ambiguous_indices.add(idx)
+
+    cat.sample_names = [p.name for p in cat.files[:8]]
+    return cat
 
 
 def _resolve_training_image(
-    paths: JobPaths,
-    model_dir: Path,
+    catalog: _ImageCatalog,
     colmap_name: str,
     *,
     prefer_equirect_stem: str | None = None,
@@ -134,41 +202,53 @@ def _resolve_training_image(
     """
     Locate the file for a COLMAP IMAGE name.
 
-    Handles basename-only names, directory prefixes, symlinks into
-    ``images_equirect``, and case-insensitive stems.
+    Resolution order:
+      1. Exact basename / relative path basename
+      2. Exact stem (case-insensitive)
+      3. Trailing numeric index (``e_000001`` ↔ ``frame_000001``)
     """
     basename = Path(colmap_name).name
     stem = prefer_equirect_stem or Path(basename).stem
-    dirs = _image_search_dirs(paths, model_dir)
 
-    # Exact basename / full relative name in each search dir
-    for d in dirs:
-        for cand in (d / basename, d / colmap_name):
-            try:
-                if cand.is_file() and cand.exists():
-                    return cand
-            except OSError:
-                continue
+    hit = catalog.by_basename.get(basename.lower())
+    if hit is not None:
+        return hit
 
-    # Stem match (equirect frame_000001.jpg ↔ COLMAP frame_000001.jpg)
-    for d in dirs:
-        found = _find_equirect_image(d, stem)
-        if found is not None:
-            return found
+    hit = catalog.by_stem.get(stem.lower())
+    if hit is not None:
+        return hit
 
+    # Cubemap COLMAP name → panorama stem already preferred above; also try
+    # index of the equirect stem and of the raw basename stem.
+    for candidate_stem in (stem, Path(basename).stem):
+        idx = _trailing_index(candidate_stem)
+        if idx is None or idx in catalog.ambiguous_indices:
+            continue
+        hit = catalog.by_index.get(idx)
+        if hit is not None:
+            return hit
     return None
 
 
-def _find_mask(mask_dir: Path | None, stem: str) -> Path | None:
+def _find_mask(mask_dir: Path | None, stem: str, catalog_stem: str | None = None) -> Path | None:
     if mask_dir is None or not mask_dir.exists():
         return None
-    p = mask_dir / f"{stem}.png"
-    if p.exists():
-        return p
-    stem_l = stem.lower()
-    for cand in mask_dir.glob("*.png"):
-        if cand.stem.lower() == stem_l:
-            return cand
+    for key in (stem, catalog_stem or ""):
+        if not key:
+            continue
+        p = mask_dir / f"{key}.png"
+        if p.exists():
+            return p
+        stem_l = key.lower()
+        for cand in mask_dir.glob("*.png"):
+            if cand.stem.lower() == stem_l:
+                return cand
+    # Numeric alias for masks (frame_000001.png ↔ e_000001)
+    idx = _trailing_index(stem)
+    if idx is not None:
+        for cand in mask_dir.glob("*.png"):
+            if _trailing_index(cand.stem) == idx:
+                return cand
     return None
 
 
@@ -190,44 +270,65 @@ def _read_points(model_dir: Path) -> tuple[np.ndarray, np.ndarray]:
     return cloud.xyz.astype(np.float32), cloud.rgb.astype(np.float32)
 
 
+def _pose_is_finite(R: np.ndarray, t: np.ndarray) -> bool:
+    return bool(np.all(np.isfinite(R)) and np.all(np.isfinite(t)))
+
+
 def _load_colmap_images(model_dir: Path) -> tuple[list[dict], Path]:
     """
     Load COLMAP image poses, preferring binary (avoids empty-POINTS2D TXT bugs).
+
+    After loading, drop entries with non-finite / zero-norm quaternions so a
+    partial corrupt model does not poison training.
     """
     model_dir = Path(model_dir)
     bin_path = model_dir / "images.bin"
+    images: list[dict] = []
     if bin_path.exists():
         images = read_images_bin(bin_path)
-        if images:
-            return images, model_dir
 
-    images_txt = model_dir / "images.txt"
-    if not images_txt.exists():
-        converted = ensure_images_txt(model_dir)
-        if converted is not None:
-            images_txt = converted
-        else:
-            for cand in (model_dir.parent / "0_txt", model_dir / "0_txt"):
-                if (cand / "images.txt").exists():
-                    images_txt = cand / "images.txt"
-                    model_dir = cand
-                    break
-    if not images_txt.exists():
-        raise FileNotFoundError(
-            f"Need images.txt or images.bin in {model_dir} "
-            "(run model_converter or use a text/binary COLMAP model)"
-        )
-    images = read_images_txt(images_txt)
-    if not images and bin_path.exists():
-        # TXT present but unreadable — last chance binary
-        images = read_images_bin(bin_path)
-    return images, model_dir
+    if not images:
+        images_txt = model_dir / "images.txt"
+        if not images_txt.exists():
+            converted = ensure_images_txt(model_dir)
+            if converted is not None:
+                images_txt = converted
+            else:
+                for cand in (model_dir.parent / "0_txt", model_dir / "0_txt"):
+                    if (cand / "images.txt").exists():
+                        images_txt = cand / "images.txt"
+                        model_dir = cand
+                        break
+        if images_txt.exists():
+            images = read_images_txt(images_txt)
+
+    # Validate poses; if binary yielded zero usable poses but TXT exists, retry TXT
+    usable = _filter_usable_images(images)
+    if not usable and bin_path.exists():
+        txt = model_dir / "images.txt"
+        if txt.exists():
+            usable = _filter_usable_images(read_images_txt(txt))
+    return usable, model_dir
+
+
+def _filter_usable_images(images: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    for im in images:
+        q = np.array([im["qw"], im["qx"], im["qy"], im["qz"]], dtype=np.float64)
+        t = np.array([im["tx"], im["ty"], im["tz"]], dtype=np.float64)
+        if not np.all(np.isfinite(q)) or not np.all(np.isfinite(t)):
+            continue
+        if float(np.linalg.norm(q)) < 1e-12:
+            continue
+        out.append(im)
+    return out
 
 
 def _pairing_error(
     paths: JobPaths,
     model_dir: Path,
     colmap_images: list[dict],
+    catalog: _ImageCatalog,
 ) -> str:
     dirs = _image_search_dirs(paths, model_dir)
     dir_notes = []
@@ -235,13 +336,16 @@ def _pairing_error(
         n = len(_list_image_files(d))
         dir_notes.append(f"  - {d}: {n} image(s)")
     sample_names = [im["name"] for im in colmap_images[:5]]
+    disk_sample = catalog.sample_names or ["(none)"]
     return (
         "No equirect training views could be paired with COLMAP images.\n"
         f"COLMAP registered {len(colmap_images)} image(s); "
         f"sample names: {sample_names}\n"
+        f"On-disk sample names: {disk_sample}\n"
         "Search dirs:\n" + "\n".join(dir_notes) + "\n"
-        "Expected matching files under 01_frames/equirect or "
-        "03_sfm/images_equirect (same basename as COLMAP NAME).\n"
+        "Matching tries: exact basename, case-insensitive stem, then unique "
+        "trailing frame index (e.g. e_000001.jpg ↔ frame_000001.jpg).\n"
+        "Expected files under 01_frames/equirect or 03_sfm/images_equirect.\n"
         "If SfM used cubemap faces, names look like frame_000001_front.jpg "
         "and the panorama must be frame_000001.jpg."
     )
@@ -259,8 +363,12 @@ def load_equirect_dataset(
     Prefers native equirect image names in COLMAP; otherwise lifts cubemap
     ``*_front`` (or any face) poses to panorama poses and pairs with
     ``01_frames/equirect`` / ``03_sfm/images_equirect`` images.
+
+    Name resolution also matches on unique trailing numeric indices so
+    ``e_000001.jpg`` pairs with ``frame_000001.jpg``.
     """
     search_dirs = _image_search_dirs(paths, model_dir)
+    catalog = _build_image_catalog(search_dirs)
     equirect_dir = paths.equirect_frames
     for d in search_dirs:
         if _list_image_files(d):
@@ -276,20 +384,30 @@ def load_equirect_dataset(
     colmap_images, model_dir = _load_colmap_images(model_dir)
     if not colmap_images:
         raise RuntimeError(
-            f"COLMAP model at {model_dir} has 0 registered images "
-            "(empty images.txt / images.bin)."
+            f"COLMAP model at {model_dir} has 0 usable registered images "
+            "(empty or corrupt images.txt / images.bin)."
         )
 
     views_by_stem: dict[str, TrainView] = {}
     skipped_missing = 0
     skipped_unreadable = 0
+    skipped_bad_pose = 0
+    paired_by_index = 0
 
     for im in colmap_images:
         name = im["name"]
-        R = qvec_to_rotmat(
-            np.array([im["qw"], im["qx"], im["qy"], im["qz"]], dtype=np.float64)
-        )
+        try:
+            R = qvec_to_rotmat(
+                np.array([im["qw"], im["qx"], im["qy"], im["qz"]], dtype=np.float64)
+            )
+        except ValueError:
+            skipped_bad_pose += 1
+            continue
         t = np.array([im["tx"], im["ty"], im["tz"]], dtype=np.float64)
+        if not _pose_is_finite(R, t):
+            skipped_bad_pose += 1
+            continue
+
         basename = Path(name).name
         m = _FACE_RE.match(basename)
         if m:
@@ -299,12 +417,17 @@ def load_equirect_dataset(
             if stem in views_by_stem and face != "front":
                 continue
             R_eq, t_eq = _lift_cubemap_pose_to_equirect(R, t, face)
+            if not _pose_is_finite(R_eq, t_eq):
+                skipped_bad_pose += 1
+                continue
             img_path = _resolve_training_image(
-                paths, model_dir, name, prefer_equirect_stem=stem
+                catalog, name, prefer_equirect_stem=stem
             )
             if img_path is None:
                 skipped_missing += 1
                 continue
+            if _trailing_index(stem) is not None and img_path.stem.lower() != stem.lower():
+                paired_by_index += 1
             probe = cv2.imread(str(img_path), cv2.IMREAD_COLOR)
             if probe is None:
                 skipped_unreadable += 1
@@ -313,7 +436,7 @@ def load_equirect_dataset(
             views_by_stem[stem] = TrainView(
                 name=stem,
                 image_path=img_path,
-                mask_path=_find_mask(mask_dir, stem),
+                mask_path=_find_mask(mask_dir, stem, img_path.stem),
                 R_w2c=R_eq.astype(np.float32),
                 t_w2c=t_eq.astype(np.float32),
                 width=w,
@@ -322,19 +445,23 @@ def load_equirect_dataset(
         else:
             # Native equirect naming
             stem = Path(basename).stem
-            img_path = _resolve_training_image(paths, model_dir, name)
+            img_path = _resolve_training_image(catalog, name)
             if img_path is None:
                 skipped_missing += 1
                 continue
+            if img_path.stem.lower() != stem.lower():
+                paired_by_index += 1
             probe = cv2.imread(str(img_path), cv2.IMREAD_COLOR)
             if probe is None:
                 skipped_unreadable += 1
                 continue
             h, w = probe.shape[:2]
-            views_by_stem[stem] = TrainView(
-                name=stem,
+            # Stable view key: prefer on-disk stem so masks/exports align with frames
+            view_key = img_path.stem
+            views_by_stem[view_key] = TrainView(
+                name=view_key,
                 image_path=img_path,
-                mask_path=_find_mask(mask_dir, stem),
+                mask_path=_find_mask(mask_dir, stem, img_path.stem),
                 R_w2c=R.astype(np.float32),
                 t_w2c=t.astype(np.float32),
                 width=w,
@@ -344,8 +471,9 @@ def load_equirect_dataset(
     views = sorted(views_by_stem.values(), key=lambda v: v.name)
     if not views:
         raise RuntimeError(
-            _pairing_error(paths, model_dir, colmap_images)
-            + f"\nSkipped missing={skipped_missing}, unreadable={skipped_unreadable}."
+            _pairing_error(paths, model_dir, colmap_images, catalog)
+            + f"\nSkipped missing={skipped_missing}, unreadable={skipped_unreadable}, "
+            f"bad_pose={skipped_bad_pose}."
         )
 
     # Apply max_width scaling metadata (actual resize at load time)
@@ -356,7 +484,18 @@ def load_equirect_dataset(
             v.height = max(1, int(round(v.height * scale)))
 
     xyz, rgb = _read_points(model_dir)
-    return EquirectDataset(views=views, points_xyz=xyz, points_rgb=rgb, equirect_dir=equirect_dir)
+    # Drop non-finite points (corrupt sparse models)
+    if len(xyz):
+        ok = np.isfinite(xyz).all(axis=1)
+        xyz, rgb = xyz[ok], rgb[ok]
+
+    ds = EquirectDataset(
+        views=views, points_xyz=xyz, points_rgb=rgb, equirect_dir=equirect_dir
+    )
+    # Stash diagnostics lightly via attribute for logs (optional)
+    ds.paired_by_index = paired_by_index  # type: ignore[attr-defined]
+    ds.skipped_bad_pose = skipped_bad_pose  # type: ignore[attr-defined]
+    return ds
 
 
 def load_view_tensors(

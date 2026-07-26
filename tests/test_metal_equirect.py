@@ -184,15 +184,23 @@ def test_densify_clone_split_prune() -> None:
 
 
 def test_read_images_bin_roundtrip(tmp_path: Path) -> None:
-    # Minimal one-image images.bin
+    # Official COLMAP layout: int32 image_id + 7 doubles + int32 camera_id
     name = b"frame_0001_front.jpg\x00"
     body = b"".join(
         [
             struct.pack("<Q", 1),  # n_images
-            struct.pack("<Q", 1),  # image_id
-            struct.pack("<dddd", 1.0, 0.0, 0.0, 0.0),  # q
-            struct.pack("<ddd", 0.0, 0.0, 1.0),  # t
-            struct.pack("<I", 1),  # camera_id
+            struct.pack(
+                "<idddddddi",
+                1,  # image_id (int32)
+                1.0,
+                0.0,
+                0.0,
+                0.0,  # q
+                0.0,
+                0.0,
+                1.0,  # t
+                1,  # camera_id (int32)
+            ),
             name,
             struct.pack("<Q", 0),  # n_points2D
         ]
@@ -203,9 +211,80 @@ def test_read_images_bin_roundtrip(tmp_path: Path) -> None:
     imgs = read_images_bin(model / "images.bin")
     assert len(imgs) == 1
     assert imgs[0]["name"] == "frame_0001_front.jpg"
+    assert abs(imgs[0]["qw"] - 1.0) < 1e-12
+    assert abs(imgs[0]["tz"] - 1.0) < 1e-12
     txt = ensure_images_txt(model)
     assert txt is not None and txt.exists()
     assert "frame_0001_front.jpg" in txt.read_text(encoding="utf-8")
+
+
+def test_read_images_bin_with_points2d_and_e_names(tmp_path: Path) -> None:
+    """Multi-image official bin must keep full names and finite quats."""
+    images = [
+        {
+            "image_id": 1,
+            "qw": 0.9,
+            "qx": 0.1,
+            "qy": 0.2,
+            "qz": 0.3,
+            "tx": 1.0,
+            "ty": 2.0,
+            "tz": 3.0,
+            "camera_id": 1,
+            "name": "e_000001.jpg",
+        },
+        {
+            "image_id": 4,
+            "qw": 1.0,
+            "qx": 0.0,
+            "qy": 0.0,
+            "qz": 0.0,
+            "tx": 0.0,
+            "ty": 0.0,
+            "tz": 1.0,
+            "camera_id": 1,
+            "name": "e_000004.jpg",
+        },
+    ]
+    path = tmp_path / "images.bin"
+    parts = [struct.pack("<Q", 2)]
+    for i, im in enumerate(images):
+        parts.append(
+            struct.pack(
+                "<idddddddi",
+                im["image_id"],
+                im["qw"],
+                im["qx"],
+                im["qy"],
+                im["qz"],
+                im["tx"],
+                im["ty"],
+                im["tz"],
+                im["camera_id"],
+            )
+        )
+        parts.append(im["name"].encode() + b"\x00")
+        n2d = 3 if i == 0 else 0
+        parts.append(struct.pack("<Q", n2d))
+        for _ in range(n2d):
+            parts.append(struct.pack("<ddq", 12.0, 34.0, -1))
+    path.write_bytes(b"".join(parts))
+    imgs = read_images_bin(path)
+    assert [im["name"] for im in imgs] == ["e_000001.jpg", "e_000004.jpg"]
+    assert abs(imgs[0]["qw"] - 0.9) < 1e-12
+    assert abs(imgs[0]["tz"] - 3.0) < 1e-12
+
+
+def test_numpy_and_torch_quat_agree() -> None:
+    from instasplat.metal_equirect.cameras import quat_to_rotmat_torch
+    from instasplat.utils.scale import qvec_to_rotmat
+
+    q = np.array([0.7, 0.1, -0.2, 0.4], dtype=np.float64)
+    Rn = qvec_to_rotmat(q)
+    Rt = quat_to_rotmat_torch(torch.tensor(q, dtype=torch.float64)).numpy()
+    np.testing.assert_allclose(Rn, Rt, atol=1e-9)
+    np.testing.assert_allclose(Rn @ Rn.T, np.eye(3), atol=1e-9)
+    np.testing.assert_allclose(np.linalg.det(Rn), 1.0, atol=1e-9)
 
 
 def test_export_ply_roundtrip(tmp_path: Path) -> None:

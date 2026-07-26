@@ -86,6 +86,96 @@ def test_load_dataset_with_path_prefix_in_colmap_name(tmp_path: Path) -> None:
     assert len(ds) == 1
 
 
+def test_load_dataset_pairs_e_prefix_with_frame_files(tmp_path: Path) -> None:
+    """COLMAP e_000001.jpg must pair with on-disk frame_000001.jpg."""
+    paths = JobPaths(tmp_path / "job")
+    paths.ensure()
+    for i in (1, 2, 3):
+        _write_jpg(paths.equirect_frames / f"frame_{i:06d}.jpg")
+        _write_jpg(paths.equirect_sfm_images / f"frame_{i:06d}.jpg")
+    paths.colmap_model.mkdir(parents=True, exist_ok=True)
+    (paths.colmap_model / "cameras.txt").write_text(
+        "1 EQUIRECTANGULAR 64 32 64 32\n",
+        encoding="utf-8",
+    )
+    (paths.colmap_model / "images.txt").write_text(
+        "1 1 0 0 0 0 0 0 1 e_000001.jpg\n\n"
+        "2 0.9 0.1 0.2 0.3 0 0 1 1 e_000002.jpg\n\n"
+        "3 1 0 0 0 0 0 2 1 e_000003.jpg\n\n",
+        encoding="utf-8",
+    )
+    (paths.colmap_model / "points3D.txt").write_text(
+        "1 0 0 1 128 128 128 0.1\n",
+        encoding="utf-8",
+    )
+    ds = load_equirect_dataset(paths, paths.colmap_model, max_width=64)
+    assert len(ds) == 3
+    assert {v.name for v in ds.views} == {
+        "frame_000001",
+        "frame_000002",
+        "frame_000003",
+    }
+    assert all(v.image_path.name.startswith("frame_") for v in ds.views)
+    assert int(getattr(ds, "paired_by_index", 0)) == 3
+
+
+def test_load_dataset_from_official_images_bin(tmp_path: Path) -> None:
+    """Real COLMAP images.bin (int32 ids) must yield usable poses + pairing."""
+    import struct
+
+    from instasplat.metal_equirect.colmap_bin import read_images_bin
+
+    paths = JobPaths(tmp_path / "job")
+    paths.ensure()
+    _write_jpg(paths.equirect_frames / "frame_000001.jpg")
+    paths.colmap_model.mkdir(parents=True, exist_ok=True)
+    (paths.colmap_model / "cameras.txt").write_text(
+        "1 EQUIRECTANGULAR 64 32 64 32\n",
+        encoding="utf-8",
+    )
+    (paths.colmap_model / "points3D.txt").write_text("1 0 0 1 1 1 1 0\n", encoding="utf-8")
+    name = b"e_000001.jpg\x00"
+    body = b"".join(
+        [
+            struct.pack("<Q", 1),
+            struct.pack(
+                "<idddddddi",
+                1,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                1,
+            ),
+            name,
+            struct.pack("<Q", 2),
+            struct.pack("<ddq", 1.0, 2.0, -1),
+            struct.pack("<ddq", 3.0, 4.0, -1),
+        ]
+    )
+    (paths.colmap_model / "images.bin").write_bytes(body)
+    imgs = read_images_bin(paths.colmap_model / "images.bin")
+    assert imgs[0]["name"] == "e_000001.jpg"
+    assert abs(imgs[0]["qw"] - 1.0) < 1e-12
+    ds = load_equirect_dataset(paths, paths.colmap_model, max_width=64)
+    assert len(ds) == 1
+    assert ds.views[0].name == "frame_000001"
+    np.testing.assert_allclose(ds.views[0].t_w2c, [0.0, 0.0, 1.0], atol=1e-5)
+
+
+def test_qvec_normalize_prevents_overflow() -> None:
+    from instasplat.utils.scale import qvec_to_rotmat
+
+    # Huge unnormalized quat previously overflowed 2*x*x products
+    R = qvec_to_rotmat(np.array([1e200, 0.0, 0.0, 0.0], dtype=np.float64))
+    np.testing.assert_allclose(R, np.eye(3), atol=1e-9)
+    R2 = qvec_to_rotmat(np.array([2.0, 0.0, 0.0, 0.0], dtype=np.float64))
+    np.testing.assert_allclose(R2, np.eye(3), atol=1e-9)
+
+
 def test_scale_preserves_all_images_with_empty_points(tmp_path: Path) -> None:
     src = tmp_path / "src"
     dst = tmp_path / "dst"

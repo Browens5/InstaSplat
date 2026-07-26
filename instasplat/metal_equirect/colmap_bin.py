@@ -10,7 +10,14 @@ def read_images_bin(path: Path) -> list[dict]:
     """
     Parse COLMAP images.bin → list of pose dicts (same keys as read_images_txt).
 
-    See https://colmap.github.io/format.html#binary-file-format
+    Layout matches COLMAP ``ReadImagesBinary`` / ``scripts/python/read_write_model.py``:
+    ``uint64 n_images``, then per image ``idddddddi`` (int32 image_id, 4×double q,
+    3×double t, int32 camera_id), null-terminated name, ``uint64 n_points2D``,
+    then ``n_points2D × (double x, double y, uint64 point3D_id)``.
+
+    NOTE: ``image_id`` is **int32**, not uint64. Reading it as 8 bytes misaligns
+    the stream and produces garbage quaternions (overflows in ``qvec_to_rotmat``)
+    and truncated names (e.g. ``e_000001.jpg`` → ``0001.jpg``).
     """
     path = Path(path)
     if not path.exists():
@@ -22,30 +29,35 @@ def read_images_bin(path: Path) -> list[dict]:
     off = 8
     images: list[dict] = []
     for _ in range(int(n_images)):
-        # Format: uint64 image_id, 4×double q, 3×double t, uint32 camera_id,
-        # null-terminated name, uint64 n_points2D, then points2D…
-        if off + 8 + 32 + 24 + 4 > len(data):
+        # 4 + 7*8 + 4 = 64 bytes of fixed properties
+        if off + 64 > len(data):
             break
-        (image_id,) = struct.unpack_from("<Q", data, off)
-        off += 8
-        qw, qx, qy, qz = struct.unpack_from("<dddd", data, off)
-        off += 32
-        tx, ty, tz = struct.unpack_from("<ddd", data, off)
-        off += 24
-        camera_id, = struct.unpack_from("<I", data, off)
-        off += 4
-        # name: null-terminated
+        (
+            image_id,
+            qw,
+            qx,
+            qy,
+            qz,
+            tx,
+            ty,
+            tz,
+            camera_id,
+        ) = struct.unpack_from("<idddddddi", data, off)
+        off += 64
         end = data.find(b"\x00", off)
         if end < 0:
             break
         name = data[off:end].decode("utf-8", errors="replace")
         off = end + 1
+        if off + 8 > len(data):
+            break
         (n2d,) = struct.unpack_from("<Q", data, off)
         off += 8
         # each point2D: double x, double y, uint64 point3D_id
-        off += int(n2d) * 24
-        if off > len(data):
+        need = int(n2d) * 24
+        if off + need > len(data):
             break
+        off += need
         images.append(
             {
                 "image_id": int(image_id),
@@ -61,6 +73,30 @@ def read_images_bin(path: Path) -> list[dict]:
             }
         )
     return images
+
+
+def write_images_bin(path: Path, images: list[dict]) -> None:
+    """Write a minimal COLMAP-compatible images.bin (empty POINTS2D)."""
+    path = Path(path)
+    parts = [struct.pack("<Q", len(images))]
+    for im in images:
+        parts.append(
+            struct.pack(
+                "<idddddddi",
+                int(im["image_id"]),
+                float(im["qw"]),
+                float(im["qx"]),
+                float(im["qy"]),
+                float(im["qz"]),
+                float(im["tx"]),
+                float(im["ty"]),
+                float(im["tz"]),
+                int(im["camera_id"]),
+            )
+        )
+        parts.append(str(im["name"]).encode("utf-8") + b"\x00")
+        parts.append(struct.pack("<Q", 0))
+    path.write_bytes(b"".join(parts))
 
 
 def ensure_images_txt(model_dir: Path) -> Path | None:

@@ -50,6 +50,20 @@ def test_heartbeat_is_quiet_and_advances_elapsed() -> None:
     assert hb.stage_elapsed_sec >= 0.05
 
 
+def test_activity_announcement_and_heartbeat() -> None:
+    tr = StageProgressTracker(stages=["sfm"])
+    tr.start_stage("sfm", 0)
+    ev = tr.announce_activity("COLMAP: feature extraction (120 images, high)")
+    assert not ev.quiet
+    assert "feature extraction" in ev.message
+    hb = tr.heartbeat()
+    assert hb.quiet
+    assert hb.message == ev.message
+    tr.set_activity("COLMAP: sparse reconstruction (incremental mapper)")
+    hb2 = tr.heartbeat()
+    assert "sparse reconstruction" in hb2.message
+
+
 def test_heartbeat_publisher_emits() -> None:
     tr = StageProgressTracker(stages=["mask"])
     tr.start_stage("mask", 0)

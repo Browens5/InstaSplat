@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,6 +21,17 @@ from instasplat.utils.colmap_cli import (
 )
 from instasplat.utils.paths import JobPaths
 from instasplat.utils.process import get_logger, run_cmd
+
+ActivityCb = Callable[[str], None]
+
+
+def _activity(cb: ActivityCb | None, message: str) -> None:
+    if cb is None:
+        return
+    try:
+        cb(message)
+    except Exception:  # noqa: BLE001 — progress must never break SfM
+        pass
 
 
 @dataclass
@@ -235,6 +247,8 @@ def run_colmap(
     image_dir: Path,
     mask_dir: Path | None,
     camera_model: str,
+    *,
+    on_activity: ActivityCb | None = None,
 ) -> Path:
     log = get_logger("instasplat.sfm")
     colmap = shutil.which("colmap")
@@ -250,6 +264,7 @@ def run_colmap(
 
     if cfg.skip_existing and _is_usable_colmap_model(model0):
         log.info("Skipping COLMAP; existing model at %s", model0)
+        _activity(on_activity, "COLMAP: using existing sparse model")
         return model0
 
     images = list_readable_images(image_dir)
@@ -259,6 +274,10 @@ def run_colmap(
             + _empty_frames_hint(paths, cfg)
         )
     log.info("COLMAP input: %d images in %s (model=%s)", len(images), image_dir, camera_model)
+    _activity(
+        on_activity,
+        f"COLMAP: {len(images)} images · camera={camera_model}",
+    )
 
     # Replace telemetry-prior / empty DB so a fixed COLMAP can re-run
     if not cfg.dry_run and model0.exists() and not _is_usable_colmap_model(model0):
@@ -301,6 +320,10 @@ def run_colmap(
     if mask_dir is not None and any(mask_dir.glob("*.png")):
         extract_cmd.extend(["--ImageReader.mask_path", str(mask_dir)])
 
+    _activity(
+        on_activity,
+        f"COLMAP: feature extraction ({len(images)} images, {cfg.sfm.quality})",
+    )
     run_cmd(extract_cmd, log_file=paths.logs / "colmap_features.log", dry_run=cfg.dry_run)
 
     n_db = 0 if cfg.dry_run else db_image_count(db)
@@ -312,9 +335,14 @@ def run_colmap(
             "COLMAP ≥ 4.1; for tiled jobs run process_chunks instead of top-level sfm."
         )
     log.info("Feature extraction registered %d images", n_db or len(images))
+    _activity(
+        on_activity,
+        f"COLMAP: feature extraction done ({n_db or len(images)} images)",
+    )
 
     gpu_flag = "1" if cfg.sfm.use_gpu else "0"
     if cfg.sfm.matcher == "exhaustive":
+        match_label = "exhaustive matching"
         match_cmd = [
             colmap or "colmap",
             "exhaustive_matcher",
@@ -324,6 +352,7 @@ def run_colmap(
             gpu_flag,
         ]
     else:
+        match_label = f"sequential matching (overlap={cfg.sfm.sequential_overlap})"
         match_cmd = [
             colmap or "colmap",
             "sequential_matcher",
@@ -334,7 +363,9 @@ def run_colmap(
             caps.match_use_gpu,
             gpu_flag,
         ]
+    _activity(on_activity, f"COLMAP: {match_label}")
     run_cmd(match_cmd, log_file=paths.logs / "colmap_match.log", dry_run=cfg.dry_run)
+    _activity(on_activity, f"COLMAP: {match_label} done")
 
     # Clean previous sparse outputs when re-running a full COLMAP pass
     if not cfg.dry_run and (not cfg.skip_existing or not _is_usable_colmap_model(model0)):
@@ -356,6 +387,7 @@ def run_colmap(
             )
 
     if mapper_kind == "global":
+        _activity(on_activity, "COLMAP: sparse reconstruction (global_mapper / GLOMAP)")
         map_cmd = [
             colmap or "colmap",
             "global_mapper",
@@ -371,6 +403,7 @@ def run_colmap(
             map_cmd.extend(list(caps.global_ba_disable_flags))
         run_cmd(map_cmd, log_file=paths.logs / "colmap_global_mapper.log", dry_run=cfg.dry_run)
     else:
+        _activity(on_activity, "COLMAP: sparse reconstruction (incremental mapper)")
         map_cmd = [
             colmap or "colmap",
             "mapper",
@@ -386,6 +419,7 @@ def run_colmap(
     # Prefer model 0; if only others exist, pick largest
     if cfg.dry_run:
         model0.mkdir(parents=True, exist_ok=True)
+        _activity(on_activity, "COLMAP: dry-run sparse model ready")
         return model0
 
     models = [p for p in sparse.iterdir() if p.is_dir()]
@@ -398,6 +432,7 @@ def run_colmap(
         # Use first model
         model0 = min(models)
     # Export text model for scale stage convenience
+    _activity(on_activity, "COLMAP: exporting text model")
     txt_dir = sparse / f"{model0.name}_txt"
     txt_dir.mkdir(parents=True, exist_ok=True)
     run_cmd(
@@ -415,6 +450,7 @@ def run_colmap(
         dry_run=cfg.dry_run,
         check=False,
     )
+    _activity(on_activity, "COLMAP: sparse reconstruction complete")
     return model0
 
 
@@ -436,7 +472,12 @@ def _resolve_sfm_mode(cfg: PipelineConfig, caps) -> str:
     return mode
 
 
-def run_sfm(cfg: PipelineConfig, paths: JobPaths) -> SfMResult:
+def run_sfm(
+    cfg: PipelineConfig,
+    paths: JobPaths,
+    *,
+    on_activity: ActivityCb | None = None,
+) -> SfMResult:
     paths.ensure()
     log = get_logger("instasplat.sfm", paths.logs / "sfm.log")
     colmap = shutil.which("colmap")
@@ -454,9 +495,12 @@ def run_sfm(cfg: PipelineConfig, paths: JobPaths) -> SfMResult:
             "Running COLMAP with EQUIRECTANGULAR camera model "
             "(full 360 panoramas → SfM → metal_equirect)"
         )
+        _activity(on_activity, "COLMAP: preparing equirect images")
         img_dir, mask_dir, n = _prepare_equirect_images(cfg, paths)
         # Force EQUIRECTANGULAR regardless of sfm.camera_model (pinhole is cubemap-only)
-        model = run_colmap(cfg, paths, img_dir, mask_dir, "EQUIRECTANGULAR")
+        model = run_colmap(
+            cfg, paths, img_dir, mask_dir, "EQUIRECTANGULAR", on_activity=on_activity
+        )
         return SfMResult(model, img_dir, mask_dir, mode, n)
 
     if mode != "perspective_cubemap":
@@ -469,9 +513,10 @@ def run_sfm(cfg: PipelineConfig, paths: JobPaths) -> SfMResult:
     )
     if not any(paths.equirect_frames.glob("*")) and not cfg.dry_run:
         raise FileNotFoundError(_empty_frames_hint(paths, cfg))
+    _activity(on_activity, "COLMAP: rendering cubemap faces")
     img_dir, mask_dir, n = render_cubemaps(cfg, paths)
     cam = cfg.sfm.camera_model
     if cam.upper() == "EQUIRECTANGULAR":
         cam = "SIMPLE_PINHOLE"
-    model = run_colmap(cfg, paths, img_dir, mask_dir, cam)
+    model = run_colmap(cfg, paths, img_dir, mask_dir, cam, on_activity=on_activity)
     return SfMResult(model, img_dir, mask_dir, "perspective_cubemap", n)

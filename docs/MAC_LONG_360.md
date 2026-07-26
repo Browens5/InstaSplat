@@ -123,9 +123,10 @@ runs/walk_360/
 
 | Knob | Safer / faster | Higher quality |
 |------|----------------|----------------|
+| `chunk.num_chunks` | `0` (auto) | `6–12` fixed tile count |
 | `chunk.base_fps` | 4–6 | 8–10 |
 | `chunk.max_fps` | 10–12 | 15 |
-| `chunk.duration_sec` | 20–25 | 15 (more tiles) |
+| `chunk.duration_sec` | 20–25 | 15 (more tiles; ignored if `num_chunks` > 0) |
 | `sfm.face_resolution` | 1024 | 1280–1536 |
 | `train.total_steps` | 12k–15k | 20k–30k |
 | `train.max_resolution` | 1280 | 1600 |

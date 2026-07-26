@@ -48,6 +48,31 @@ def test_plan_chunks_temporal_overlap() -> None:
         assert b.start_sec >= a.end_sec - 5.0 - 1e-6
 
 
+def test_plan_chunks_preselected_count() -> None:
+    """num_chunks forces an exact tile count and covers the full timeline."""
+    manifest = plan_chunks(
+        duration_sec=100.0,
+        chunk_duration_sec=25.0,  # ignored when num_chunks is set
+        overlap_sec=5.0,
+        base_fps=4.0,
+        max_fps=8.0,
+        max_frames_per_chunk=200,
+        num_chunks=8,
+        target_path_length_m=40.0,  # must not override fixed count
+    )
+    assert len(manifest.chunks) == 8
+    assert manifest.strategy == "fixed_count_temporal"
+    assert manifest.chunks[0].start_sec == 0.0
+    assert abs(manifest.chunks[-1].end_sec - 100.0) < 1e-6
+    for a, b in zip(manifest.chunks, manifest.chunks[1:], strict=False):
+        assert b.start_sec < a.end_sec  # overlapping
+    # Single-chunk covers the whole video
+    one = plan_chunks(duration_sec=42.0, num_chunks=1, overlap_sec=5.0, target_path_length_m=None)
+    assert len(one.chunks) == 1
+    assert one.chunks[0].start_sec == 0.0
+    assert abs(one.chunks[0].end_sec - 42.0) < 1e-6
+
+
 def test_umeyama_recovers_sim3() -> None:
     rng = np.random.default_rng(0)
     src = rng.normal(size=(40, 3))

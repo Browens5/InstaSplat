@@ -51,13 +51,16 @@ class ChunkConfig:
     """
 
     enabled: bool = False
+    # 0 = auto from duration_sec; >0 = plan exactly this many overlapping tiles
+    num_chunks: int = 0
     duration_sec: float = 25.0
     overlap_sec: float = 5.0
     base_fps: float = 6.0
     max_fps: float = 15.0
     source_fps_hint: float = 30.0
     max_frames_per_chunk: int = 180
-    # Soft target path length per chunk when GPS exists (meters)
+    # Soft target path length per chunk when GPS exists (meters).
+    # Ignored when num_chunks > 0 (fixed count uses equal temporal tiles).
     target_path_length_m: float | None = 40.0
     max_parallel_chunks: int = 1
     # LongSplat-style prune of low-opacity Gaussians before/after merge (0–1)
@@ -408,6 +411,7 @@ extract:
 
 chunk:
   enabled: true
+  num_chunks: 0             # 0 = auto from duration_sec; >0 = exact tile count
   duration_sec: 25.0
   overlap_sec: 5.0
   base_fps: 6.0             # densify above this on turns
@@ -493,6 +497,7 @@ mode: tiled
 
 chunk:
   enabled: true
+  num_chunks: 0             # 0 = auto; >0 = exact number of tiles
   duration_sec: 25.0
   overlap_sec: 5.0
   base_fps: 6.0

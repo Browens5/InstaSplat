@@ -71,6 +71,7 @@ def run_plan_chunks(cfg: PipelineConfig, paths: JobPaths) -> ChunkManifest:
         paths.gps_csv if paths.gps_csv.exists() else None,
     )
     cc = cfg.chunk
+    n_chunks = max(0, int(getattr(cc, "num_chunks", 0) or 0))
     manifest = plan_chunks(
         duration_sec=duration,
         chunk_duration_sec=cc.duration_sec,
@@ -78,7 +79,8 @@ def run_plan_chunks(cfg: PipelineConfig, paths: JobPaths) -> ChunkManifest:
         base_fps=cc.base_fps,
         max_fps=cc.max_fps,
         max_frames_per_chunk=cc.max_frames_per_chunk,
-        target_path_length_m=cc.target_path_length_m,
+        target_path_length_m=None if n_chunks > 0 else cc.target_path_length_m,
+        num_chunks=n_chunks if n_chunks > 0 else None,
         gyro=gyro,
         gps=gps,
         source_fps_hint=cc.source_fps_hint,
@@ -86,10 +88,11 @@ def run_plan_chunks(cfg: PipelineConfig, paths: JobPaths) -> ChunkManifest:
     out = chunks_root(paths) / "manifest.json"
     manifest.save(out)
     log.info(
-        "Planned %d chunks over %.1fs (%s)",
+        "Planned %d chunks over %.1fs (%s)%s",
         len(manifest.chunks),
         manifest.duration_sec,
         manifest.strategy,
+        f" [num_chunks={n_chunks}]" if n_chunks > 0 else "",
     )
     return manifest
 

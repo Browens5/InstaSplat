@@ -101,6 +101,7 @@ def plan_chunks(
     max_fps: float = 15.0,
     max_frames_per_chunk: int = 180,
     target_path_length_m: float | None = 40.0,
+    num_chunks: int | None = None,
     gyro: GyroSeries | None = None,
     gps: GpsSeries | None = None,
     source_fps_hint: float = 30.0,
@@ -109,18 +110,55 @@ def plan_chunks(
     Auto-chunk a long capture.
 
     Primary split is temporal with overlap. When GPS is present and
-    ``target_path_length_m`` is set, chunk boundaries also respect traveled
-    distance so dense walking and sparse transit get sensible tile sizes.
+    ``target_path_length_m`` is set (and ``num_chunks`` is not), chunk
+    boundaries also respect traveled distance so dense walking and sparse
+    transit get sensible tile sizes.
+
+    When ``num_chunks`` > 0, plan exactly that many overlapping tiles and
+    derive each tile's duration from the video length (GPS path sizing is
+    skipped so the count stays exact).
     """
     notes: list[str] = []
     if duration_sec <= 0:
         duration_sec = 60.0
         notes.append("duration unknown; defaulting to 60s placeholder")
 
-    overlap_sec = max(0.0, min(overlap_sec, chunk_duration_sec * 0.8))
+    n_fixed = int(num_chunks) if num_chunks is not None else 0
     boundaries: list[tuple[float, float]] = []
+    strategy: str
 
-    if gps is not None and target_path_length_m and target_path_length_m > 0:
+    if n_fixed > 0:
+        n_fixed = max(1, n_fixed)
+        # Equal temporal tiles with fixed overlap:
+        #   N * L - (N-1) * O = D  →  L = (D + (N-1)*O) / N
+        # Cap overlap so tiles stay longer than the overlap itself.
+        max_overlap = max(0.0, duration_sec * 0.5) if n_fixed == 1 else duration_sec
+        overlap_sec = max(0.0, min(float(overlap_sec), max_overlap))
+        if n_fixed == 1:
+            chunk_len = duration_sec
+            overlap_sec = 0.0
+        else:
+            chunk_len = (duration_sec + (n_fixed - 1) * overlap_sec) / float(n_fixed)
+            # Guard degenerate overlap that would make stride non-positive
+            if chunk_len <= overlap_sec + 1e-6:
+                overlap_sec = max(0.0, chunk_len * 0.4)
+                chunk_len = (duration_sec + (n_fixed - 1) * overlap_sec) / float(n_fixed)
+            chunk_duration_sec = chunk_len
+        stride = max(1e-6, chunk_len - overlap_sec)
+        for i in range(n_fixed):
+            start = i * stride
+            end = min(duration_sec, start + chunk_len)
+            if i == n_fixed - 1:
+                # Snap last tile to the end so coverage is exact
+                end = duration_sec
+                start = max(0.0, end - chunk_len)
+            boundaries.append((float(start), float(end)))
+        strategy = "fixed_count_temporal"
+        notes.append(
+            f"preselected {n_fixed} chunks · tile≈{chunk_len:.1f}s · overlap={overlap_sec:.1f}s"
+        )
+    elif gps is not None and target_path_length_m and target_path_length_m > 0:
+        overlap_sec = max(0.0, min(overlap_sec, chunk_duration_sec * 0.8))
         notes.append("spatial-aware temporal chunking via GPS path length")
         t = 0.0
         while t < duration_sec - 1e-6:
@@ -145,6 +183,7 @@ def plan_chunks(
             t = max(t + 0.1, end - overlap_sec)
         strategy = "gps_path_temporal"
     else:
+        overlap_sec = max(0.0, min(overlap_sec, chunk_duration_sec * 0.8))
         notes.append("pure temporal chunking")
         step = max(1.0, chunk_duration_sec - overlap_sec)
         t = 0.0
@@ -156,8 +195,9 @@ def plan_chunks(
             t += step
         strategy = "temporal"
 
-    overlap_ratio = overlap_sec / max(chunk_duration_sec, 1e-6)
-    if overlap_ratio < 0.15:
+    ref_duration = chunk_duration_sec if chunk_duration_sec > 0 else 25.0
+    overlap_ratio = overlap_sec / max(ref_duration, 1e-6)
+    if n_fixed != 1 and overlap_ratio < 0.15:
         notes.append(
             f"overlap_ratio={overlap_ratio:.2f} is low; prefer >=0.15 for tile align"
         )

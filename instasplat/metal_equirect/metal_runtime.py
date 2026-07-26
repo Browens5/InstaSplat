@@ -105,8 +105,9 @@ def active_composite_backend() -> str:
 
 def metal_status() -> dict:
     pipe = _try_load_pipeline()
+    shared = bool(pipe and getattr(pipe, "shared_buffers", False))
     if pipe:
-        active = "metal_oit"
+        active = "metal_oit_shared" if shared else "metal_oit"
     elif _FORCE_REF:
         active = "ref_oit"
     else:
@@ -118,34 +119,20 @@ def metal_status() -> dict:
         "metallib": str(_LIB) if _LIB.exists() else None,
         "compiled": _LIB.exists(),
         "dispatch": bool(pipe),
+        "shared_buffers": shared,
         "force_reference": _FORCE_REF,
         "active_backend": active,
         "fused_composite": True,
         "note": (
-            "Fused soft-OIT: Metal forward + torch backward (STE/recompute) when "
-            "PyObjC metallib loads; otherwise CPU reference forward or torch OIT."
+            "Fused soft-OIT with pooled MTL shared buffers (one D2H/H2D per step) "
+            "when PyObjC metallib loads; else CPU reference or torch OIT."
+            if shared
+            else (
+                "Fused soft-OIT: Metal forward + torch backward when available; "
+                "otherwise CPU reference forward or torch OIT."
+            )
         ),
     }
-
-
-def _tensors_to_numpy(
-    mean_2d: torch.Tensor,
-    cov_2d: torch.Tensor,
-    radius: torch.Tensor,
-    opacities: torch.Tensor,
-    colors: torch.Tensor,
-    depth: torch.Tensor,
-    valid: torch.Tensor,
-) -> tuple[np.ndarray, ...]:
-    return (
-        mean_2d.detach().float().cpu().numpy(),
-        cov_2d.detach().float().cpu().numpy(),
-        radius.detach().float().cpu().numpy(),
-        opacities.detach().float().cpu().numpy(),
-        colors.detach().float().cpu().numpy(),
-        depth.detach().float().cpu().numpy(),
-        valid.detach().to(torch.uint8).cpu().numpy(),
-    )
 
 
 def soft_oit_forward_numpy(
@@ -161,11 +148,7 @@ def soft_oit_forward_numpy(
     *,
     footprint: int = 24,
 ) -> tuple[np.ndarray, str]:
-    """
-    Run fused soft-OIT forward. Prefers Metal; falls back to CPU reference.
-
-    Returns ``(rgb HxWx3 float32, backend_name)``.
-    """
+    """NumPy fused forward (legacy / tests). Prefers Metal; else CPU reference."""
     global _ACTIVE
     pipe = _try_load_pipeline()
     if pipe and not _FORCE_REF:
@@ -182,8 +165,8 @@ def soft_oit_forward_numpy(
                 width,
                 footprint=footprint,
             )
-            _ACTIVE = "metal_oit"
-            return out, "metal_oit"
+            _ACTIVE = "metal_oit_shared" if getattr(pipe, "shared_buffers", False) else "metal_oit"
+            return out, _ACTIVE
         except Exception:
             pass
     out = soft_oit_reference(
@@ -202,12 +185,75 @@ def soft_oit_forward_numpy(
     return out, "ref_oit"
 
 
+def soft_oit_forward_tensors(
+    mean_2d: torch.Tensor,
+    cov_2d: torch.Tensor,
+    radius: torch.Tensor,
+    opacities: torch.Tensor,
+    colors: torch.Tensor,
+    depth: torch.Tensor,
+    valid: torch.Tensor,
+    height: int,
+    width: int,
+    *,
+    footprint: int = 24,
+) -> tuple[torch.Tensor, str]:
+    """
+    Tensor fused forward.
+
+    On Metal: shared-buffer path (one copy in, one copy out, pooled MTLBuffers).
+    Else: CPU reference via numpy, then back to ``mean_2d.device``.
+    """
+    global _ACTIVE
+    pipe = _try_load_pipeline()
+    if pipe and not _FORCE_REF:
+        try:
+            out = pipe.soft_oit_from_tensors(
+                mean_2d,
+                cov_2d,
+                radius,
+                opacities,
+                colors,
+                depth,
+                valid,
+                height,
+                width,
+                footprint=footprint,
+                out_device=mean_2d.device,
+                out_dtype=mean_2d.dtype,
+            )
+            _ACTIVE = (
+                "metal_oit_shared" if getattr(pipe, "shared_buffers", False) else "metal_oit"
+            )
+            return out, _ACTIVE
+        except Exception:
+            pass
+
+    arrays = (
+        mean_2d.detach().float().cpu().numpy(),
+        cov_2d.detach().float().cpu().numpy(),
+        radius.detach().float().cpu().numpy(),
+        opacities.detach().float().cpu().numpy(),
+        colors.detach().float().cpu().numpy(),
+        depth.detach().float().cpu().numpy(),
+        valid.detach().to(torch.uint8).cpu().numpy(),
+    )
+    rgb_np = soft_oit_reference(
+        *arrays,
+        height,
+        width,
+        footprint=footprint,
+    )
+    _ACTIVE = "ref_oit"
+    return (
+        torch.from_numpy(rgb_np).to(device=mean_2d.device, dtype=mean_2d.dtype),
+        "ref_oit",
+    )
+
+
 class FusedSoftOIT(torch.autograd.Function):
     """
-    Metal (or CPU-ref) soft-OIT forward; torch OIT recompute for backward.
-
-    Training forward stays on the fused path; grads come from the vectorized
-    torch composite so the rest of the graph (means, SH, …) keeps flowing.
+    Metal shared-buffer (or CPU-ref) soft-OIT forward; torch OIT for backward.
     """
 
     @staticmethod
@@ -228,19 +274,20 @@ class FusedSoftOIT(torch.autograd.Function):
         ctx.height = int(height)
         ctx.width = int(width)
         ctx.footprint = int(footprint)
-        ctx.device = mean_2d.device
-        ctx.dtype = mean_2d.dtype
 
-        arrays = _tensors_to_numpy(
-            mean_2d, cov_2d, radius, opacities, colors, depth, valid
-        )
-        rgb_np, _backend = soft_oit_forward_numpy(
-            *arrays,
-            height=ctx.height,
-            width=ctx.width,
+        out, _backend = soft_oit_forward_tensors(
+            mean_2d,
+            cov_2d,
+            radius,
+            opacities,
+            colors,
+            depth,
+            valid,
+            ctx.height,
+            ctx.width,
             footprint=ctx.footprint,
         )
-        return torch.from_numpy(rgb_np).to(device=ctx.device, dtype=ctx.dtype)
+        return out
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):  # type: ignore[override]
@@ -255,7 +302,6 @@ class FusedSoftOIT(torch.autograd.Function):
             rad_g = radius.detach().requires_grad_(True)
             op_g = opacities.detach().requires_grad_(True)
             col_g = colors.detach().requires_grad_(True)
-            # depth/valid are treated as constants for the torch recompute
             pred = _composite_oit_batched(
                 mean_g,
                 cov_g,
@@ -275,11 +321,11 @@ class FusedSoftOIT(torch.autograd.Function):
             rad_g.grad,
             op_g.grad,
             col_g.grad,
-            None,  # depth
-            None,  # valid
-            None,  # height
-            None,  # width
-            None,  # footprint
+            None,
+            None,
+            None,
+            None,
+            None,
         )
 
 
@@ -310,7 +356,6 @@ def fused_soft_oit(
     )
 
 
-# Back-compat alias used by older call sites
 def metal_fused_oit_ste(
     torch_img: torch.Tensor,
     mean_2d: torch.Tensor,
@@ -322,11 +367,7 @@ def metal_fused_oit_ste(
     valid: torch.Tensor,
     camera,
 ) -> torch.Tensor:
-    """
-    Legacy STE wrapper. Prefer ``fused_soft_oit`` (Metal-first, no torch forward).
-
-    Kept so older call sites keep working: ignores ``torch_img`` and runs fused path.
-    """
+    """Legacy STE wrapper — ignores ``torch_img``, runs fused path."""
     _ = torch_img
     return fused_soft_oit(
         mean_2d, cov_2d, radius, opacities, colors, depth, valid, camera

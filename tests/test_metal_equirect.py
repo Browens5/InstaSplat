@@ -351,9 +351,58 @@ def test_export_ply_roundtrip(tmp_path: Path) -> None:
 def test_metal_status_dict() -> None:
     st = metal_status()
     assert "active_backend" in st
-    assert st["active_backend"] in {"torch_oit", "metal_oit", "ref_oit"}
+    assert st["active_backend"] in {
+        "torch_oit",
+        "metal_oit",
+        "metal_oit_shared",
+        "ref_oit",
+    }
     assert st.get("fused_composite") is True
     assert "dispatch" in st
+    assert "shared_buffers" in st
+
+
+def test_pack_cov2d_symmetrizes() -> None:
+    from instasplat.metal_equirect._metal_buffers import pack_cov2d
+
+    cov = torch.tensor(
+        [[[1.0, 0.2], [0.4, 2.0]], [[3.0, -0.5], [-0.5, 4.0]]],
+        dtype=torch.float32,
+    )
+    packed = pack_cov2d(cov)
+    assert packed.shape == (2, 4)
+    assert abs(float(packed[0, 1]) - 0.3) < 1e-6
+    assert float(packed[0, 0]) == 1.0 and float(packed[0, 2]) == 2.0
+
+
+def test_host_shared_pool_grow_and_view() -> None:
+    """Exercise SharedBufferPool semantics with a tiny host-side fake MTL device."""
+    from instasplat.metal_equirect._metal_buffers import SharedBufferPool
+
+    class _FakeBuf:
+        def __init__(self, n: int) -> None:
+            self._mem = bytearray(n)
+
+        def contents(self):
+            return memoryview(self._mem)
+
+    class _FakeDevice:
+        def newBufferWithLength_options_(self, length, _opts):
+            return _FakeBuf(int(length))
+
+    pool = SharedBufferPool(_FakeDevice(), storage_mode=0)
+    src = torch.arange(12, dtype=torch.float32).reshape(4, 3)
+    pool.copy_in("color", src, (4, 3))
+    view = pool.torch_view("color", (4, 3), torch.float32)
+    assert torch.allclose(view, src)
+    # Grow path
+    big = torch.zeros(100, dtype=torch.float32)
+    pool.copy_in("color", big, (100,))
+    assert pool.torch_view("color", (100,), torch.float32).shape == (100,)
+    # Second copy into same capacity should not realloc-break the view link
+    big2 = torch.ones(100, dtype=torch.float32)
+    pool.copy_in("color", big2, (100,))
+    assert float(pool.torch_view("color", (100,), torch.float32).sum()) == 100.0
 
 
 def test_fused_metal_composite_forward_and_backward() -> None:

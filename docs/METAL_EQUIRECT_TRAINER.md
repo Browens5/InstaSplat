@@ -96,7 +96,8 @@ interval. The live viewer reloads a **subsampled** `live.ply` every
 ### Speed path (Mac)
 
 - **Fused Metal soft-OIT** (`composite: metal`) — Metal forward + torch backward;
-  CPU reference mirrors the kernel when PyObjC/metallib is unavailable
+  pooled shared MTLBuffers (one D2H / one H2D per step); CPU reference mirrors
+  the kernel when PyObjC/metallib is unavailable
 - **Vectorized torch OIT** (`composite: oit`) — batched soft splat via `index_add`
 - **View cache** — decode panoramas once into RAM/MPS
 - **Resolution schedule** — half-res / large tiles early → full-res / fine tiles late
@@ -123,4 +124,5 @@ Cloud CUDA **gsplat 3DGUT** remains optional for scale (`cloud_job.json`).
 4. ~~Vectorized OIT, view cache, schedule, async live PLY~~
 5. ~~Fused Metal soft-OIT metallib (+ optional PyObjC)~~
 6. ~~Metal-first composite (`composite: metal`) with torch backward~~
-7. Tighter Metal↔MPS buffer sharing (avoid CPU round-trip in forward)
+7. ~~Pooled MTL shared buffers (one D2H/H2D per step, no numpy round-trip)~~
+8. True zero-copy MPS↔MTLBuffer (PyTorch MPS storage interop) when exposed

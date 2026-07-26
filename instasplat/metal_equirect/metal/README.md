@@ -26,8 +26,12 @@ Kernels:
 
 1. **Forward** — Metal soft-OIT when PyObjC + metallib load; else CPU reference
    (`soft_oit_ref.py`) that mirrors the kernel.
-2. **Backward** — recompute vectorized torch OIT so grads flow to means / SH / etc.
+2. **Shared buffers** — pooled `MTLResourceStorageModeShared` buffers with torch
+   CPU views on `contents()`. Each step: one `copy_` in (MPS→shared), kernel,
+   one `copy_` out (shared→MPS). No per-step `numpy`/`tobytes` buffer alloc.
+3. **Backward** — recompute vectorized torch OIT so grads flow to means / SH / etc.
 
 Inference / `torch.no_grad()` still uses the fused forward only (no torch composite).
 
 Set `train.composite: metal` (Mac defaults) or keep `oit` / `tile` for pure torch.
+

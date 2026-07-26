@@ -285,8 +285,10 @@ def train_equirect(
         log.info("metal_runtime: %s", status)
         if composite == "metal":
             log.info(
-                "Fused composite path enabled (forward=%s); torch OIT for backward",
+                "Fused composite path enabled (forward=%s, shared_buffers=%s); "
+                "torch OIT for backward",
                 "metal" if status.get("dispatch") else "cpu_ref",
+                bool(status.get("shared_buffers")),
             )
 
     target_sh = clamp_sh_degree(sh_degree)

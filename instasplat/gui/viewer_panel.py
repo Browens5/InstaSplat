@@ -135,7 +135,7 @@ class ViewerPanel(QWidget):
 
         self._tabs = tabs
         self._last_train_step: int = -1
-        # ~1s poll so live.ply written every 25 train steps shows promptly
+        # ~1s poll so async live.ply (every ~100 train steps) shows promptly
         self._poll = QTimer(self)
         self._poll.setInterval(1000)
         self._poll.timeout.connect(lambda: self.refresh(force=False))
@@ -225,7 +225,7 @@ class ViewerPanel(QWidget):
         path_key = ""
         hb = self._read_train_heartbeat()
         hb_step = int(hb.get("step", -1)) if hb else -1
-        # Force splat reload when training advances (live.ply every ~25 steps)
+        # Force splat reload when training advances (live.ply every ~100 steps)
         if mode == "splat" and hb_step >= 0 and hb_step != self._last_train_step:
             force = True
             self._last_train_step = hb_step
@@ -274,7 +274,7 @@ class ViewerPanel(QWidget):
             waiting = (
                 "Waiting for COLMAP sparse model (after mapper)…"
                 if mode == "sparse"
-                else "Waiting for training live.ply (updates every 25 steps)…"
+                else "Waiting for training live.ply (updates every ~100 steps)…"
             )
             self.gl.set_cloud(None, title=waiting)
             self.caption.setText(waiting)

@@ -81,16 +81,25 @@ train:
   export_every: 500        # incremental equirect_XXXXXX.ply (GUI: 50–1000)
   sh_degree: 1             # 0–3 spherical harmonics
   max_gaussians: 40000
-  viewer_every: 25         # overwrite live.ply for GUI viewer
+  viewer_every: 100        # async subsampled live.ply for GUI viewer
   lr: 0.01
   with_eval3d: true
-  composite: tile          # tile | oit
+  composite: oit           # oit (fast vectorized) | tile
   sh_warmup_steps: 500
   densify_every: 200
 ```
 
 GUI **Training** group exposes steps, max Gaussians, SH degree, and PLY export
-interval. The live viewer reloads `live.ply` every `viewer_every` steps (default 25).
+interval. The live viewer reloads a **subsampled** `live.ply` every
+`viewer_every` steps (default 100, written asynchronously).
+
+### Speed path (Mac)
+
+- **Vectorized OIT** — batched soft splat via `index_add` (no per-Gaussian Python / GPU syncs)
+- **View cache** — decode panoramas once into RAM/MPS
+- **Resolution schedule** — half-res / large tiles early → full-res / fine tiles late
+- **Metal fused soft-OIT** — optional metallib + PyObjC dispatch with STE grads
+- **Async live preview** — subsampled PLY so training is not blocked by export
 
 ## Device policy
 
@@ -98,7 +107,7 @@ interval. The live viewer reloads `live.ply` every `viewer_every` steps (default
 |--------|----------|
 | Apple Silicon + MPS | Default training device (all Gaussian params on MPS) |
 | CPU | Auto-fallback if an MPS probe forward fails; also CI |
-| Metal metallib | Compiled on macOS when `xcrun metal` exists; torch UT path always works |
+| Metal metallib | Soft-OIT kernels; PyObjC dispatch when available; else torch OIT |
 
 Covariance transforms use batched matmul (`R Σ Rᵀ`), not `einsum`, to avoid
 PyTorch MPS “Placeholder storage has not been allocated” crashes.
@@ -110,5 +119,6 @@ Cloud CUDA **gsplat 3DGUT** remains optional for scale (`cloud_job.json`).
 1. ~~UT equirect rasterizer, train loop, PLY~~
 2. ~~Tile / OIT composite, eval3d, MCMC densify, SH warmup~~
 3. ~~Previews, heartbeat, `train-equirect`, images.bin~~
-4. Native Metal UT dispatch (metallib present; torch path active)
-5. Higher-throughput tile sort (gsplat parity)
+4. ~~Vectorized OIT, view cache, schedule, async live PLY~~
+5. ~~Fused Metal soft-OIT metallib (+ optional PyObjC STE)~~
+6. Tighter Metal↔MPS buffer sharing (avoid CPU round-trip in STE)

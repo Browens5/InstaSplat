@@ -58,7 +58,7 @@ def test_build_config_includes_train_options(tmp_path) -> None:
     assert cfg.train.max_gaussians == 25000
     assert cfg.train.sh_degree == 2
     assert cfg.train.export_every == 200
-    assert cfg.train.viewer_every == 25
+    assert cfg.train.viewer_every == 100
     win.close()
     del win
     _ = app

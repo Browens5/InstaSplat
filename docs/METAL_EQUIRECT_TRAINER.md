@@ -114,8 +114,7 @@ asynchronously). COLMAP sparse previews still use the OpenGL point cloud path.
   pooled shared MTLBuffers (one D2H / one H2D per step); CPU reference mirrors
   the kernel when PyObjC/metallib is unavailable
 - **Vectorized torch OIT** (`composite: oit`) — batched soft splat via `index_add`
-- **View cache** — decode panoramas once into RAM/MPS
-- **Resolution schedule** — half-res / large tiles early → full-res / fine tiles late
+- **View cache** — decode panoramas once into RAM/MPS (full resolution)
 - **Async live preview** — SuperSplat-embedded `live.ply` (≤`live_max_points`) so training is not blocked by export
 
 ## Device policy
@@ -136,7 +135,7 @@ Cloud CUDA **gsplat 3DGUT** remains optional for scale (`cloud_job.json`).
 1. ~~UT equirect rasterizer, train loop, PLY~~
 2. ~~Tile / OIT composite, eval3d, MCMC densify, SH warmup~~
 3. ~~Previews, heartbeat, `train-equirect`, images.bin~~
-4. ~~Vectorized OIT, view cache, schedule, async live PLY~~
+4. ~~Vectorized OIT, view cache, async live PLY~~
 5. ~~Fused Metal soft-OIT metallib (+ optional PyObjC)~~
 6. ~~Metal-first composite (`composite: metal`) with torch backward~~
 7. ~~Pooled MTL shared buffers (one D2H/H2D per step, no numpy round-trip)~~

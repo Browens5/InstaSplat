@@ -373,7 +373,7 @@ class Pipeline:
                 loss = ev.get("loss")
                 phase = ev.get("phase") or ""
                 msg = f"step {step}/{total}"
-                if phase:
+                if phase and phase != "full":
                     msg = f"{msg} · {phase}"
                 if loss is not None:
                     try:

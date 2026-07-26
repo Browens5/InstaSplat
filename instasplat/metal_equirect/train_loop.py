@@ -30,7 +30,6 @@ from instasplat.metal_equirect.gaussians import (
 from instasplat.metal_equirect.metal_runtime import compile_metallib, metal_status
 from instasplat.metal_equirect.optim_utils import build_optimizers, step_all, zero_grad
 from instasplat.metal_equirect.rasterize import photometric_loss, rasterize_equirect
-from instasplat.metal_equirect.schedule import schedule_at_step
 from instasplat.metal_equirect.view_cache import ViewCache
 
 
@@ -265,7 +264,6 @@ def train_equirect(
     preview_every: int = 100,
     live_max_points: int = 100_000,
     cache_views: bool = True,
-    use_resolution_schedule: bool = True,
     on_progress: ProgressCallback | None = None,
     log=None,
 ) -> TrainStats:
@@ -276,7 +274,7 @@ def train_equirect(
     - Vectorized OIT / optional Metal fused forward
     - AbsGS 2D absgrad densify with Adam-preserving prune/clone/split
     - Phased split→clone over densify window + opacity reset; optional Rust index helper
-    - View cache + progressive resolution schedule
+    - View cache (full-resolution views)
     - Async subsampled ``live.ply`` for the GUI viewer
     """
     device = pick_device(prefer_mps=prefer_mps)
@@ -363,7 +361,7 @@ def train_equirect(
         log.info(
             "metal_equirect: device=%s views=%d init_gaussians=%d steps=%d "
             "sh=%d/%d max_gaussians=%d export_every=%d viewer_every=%d "
-            "eval3d=%s composite=%s schedule=%s",
+            "eval3d=%s composite=%s",
             device,
             len(dataset),
             model.n,
@@ -375,7 +373,6 @@ def train_equirect(
             viewer_every,
             with_eval3d,
             composite,
-            use_resolution_schedule,
         )
 
     last_loss = 0.0
@@ -399,17 +396,11 @@ def train_equirect(
             if log:
                 log.info("Enabled SH degree %d at step %d", new_deg, step)
 
-        sched = (
-            schedule_at_step(
-                step, total_steps, base_max_gaussians_render=max_gaussians_render
-            )
-            if use_resolution_schedule
-            else None
-        )
-        width_scale = sched.width_scale if sched else 1.0
-        tile_size = sched.tile_size if sched else 16
-        max_per_tile = sched.max_per_tile if sched else 64
-        render_cap = sched.max_gaussians_render if sched else max_gaussians_render
+        # Always train at full resolution (no coarse→fine schedule)
+        width_scale = 1.0
+        tile_size = 16
+        max_per_tile = 64
+        render_cap = max_gaussians_render
 
         view = dataset.views[(step - 1) % n_views]
         if view_cache is not None:
@@ -419,28 +410,6 @@ def train_equirect(
 
             rgb, mask, R, t = load_view_tensors(view, device)
             w, h = view.width, view.height
-            if width_scale < 1.0:
-                import torch.nn.functional as F
-
-                tw = max(16, int(round(w * width_scale)))
-                th = max(8, int(round(tw * h / max(w, 1))))
-                rgb = (
-                    F.interpolate(
-                        rgb.permute(2, 0, 1).unsqueeze(0),
-                        size=(th, tw),
-                        mode="bilinear",
-                        align_corners=False,
-                    )
-                    .squeeze(0)
-                    .permute(1, 2, 0)
-                )
-                if mask is not None:
-                    mask = F.interpolate(
-                        mask.unsqueeze(0).unsqueeze(0),
-                        size=(th, tw),
-                        mode="nearest",
-                    ).squeeze(0).squeeze(0)
-                w, h = tw, th
 
         cam = EquirectCamera(w, h)
 
@@ -523,29 +492,23 @@ def train_equirect(
         if export_every > 0 and (step % export_every == 0 or step == total_steps):
             ply_path = export_ply(model, export_dir / f"equirect_{step:06d}.ply")
             if log:
-                phase = sched.phase if sched else "full"
                 log.info(
-                    "step %d/%d loss=%.5f gaussians=%d sh=%d phase=%s → %s",
+                    "step %d/%d loss=%.5f gaussians=%d sh=%d → %s",
                     step,
                     total_steps,
                     last_loss,
                     model.n,
                     model.sh_degree,
-                    phase,
                     ply_path.name,
                 )
         elif log and step % 50 == 0:
-            phase = sched.phase if sched else "full"
             log.info(
-                "step %d/%d loss=%.5f gaussians=%d sh=%d phase=%s res=%.2f tile=%d",
+                "step %d/%d loss=%.5f gaussians=%d sh=%d",
                 step,
                 total_steps,
                 last_loss,
                 model.n,
                 model.sh_degree,
-                phase,
-                width_scale,
-                tile_size,
             )
 
         if on_progress is not None:
@@ -556,7 +519,7 @@ def train_equirect(
                     "loss": last_loss,
                     "n_gaussians": model.n,
                     "sh_degree": model.sh_degree,
-                    "phase": sched.phase if sched else "full",
+                    "phase": "full",
                     "width_scale": width_scale,
                     "preview": str(preview_path) if preview_path else None,
                     "ply": str(ply_path) if ply_path else None,

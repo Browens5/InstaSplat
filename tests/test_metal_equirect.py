@@ -202,7 +202,6 @@ def test_train_smoke_exports_ply_and_preview(tmp_path: Path) -> None:
         composite="oit",
         prefer_mps=False,
         preview_every=1,
-        use_resolution_schedule=True,
         on_progress=events.append,
         log=None,
     )
@@ -211,7 +210,8 @@ def test_train_smoke_exports_ply_and_preview(tmp_path: Path) -> None:
     assert events and events[-1]["step"] == 3
     assert (export_dir / "previews").is_dir()
     assert (export_dir / "live.ply").exists()
-    assert events[-1].get("phase") in {"coarse", "mid", "fine", "full"}
+    assert events[-1].get("phase") == "full"
+    assert events[-1].get("width_scale") == 1.0
 
 
 def test_densify_clone_split_prune() -> None:
@@ -701,18 +701,6 @@ def test_soft_oit_reference_matches_torch_oit_roughly() -> None:
     mae = float(np.abs(torch_img.numpy() - ref).mean())
     assert mae < 0.25
     assert np.isfinite(ref).all()
-
-
-def test_schedule_coarse_to_fine() -> None:
-    from instasplat.metal_equirect.schedule import schedule_at_step
-
-    early = schedule_at_step(1, 1000)
-    mid = schedule_at_step(500, 1000)
-    late = schedule_at_step(900, 1000)
-    assert early.phase == "coarse" and early.width_scale == 0.5 and early.tile_size == 64
-    assert mid.phase == "mid" and mid.width_scale == 0.75
-    assert late.phase == "fine" and late.width_scale == 1.0 and late.tile_size == 16
-    assert early.max_per_tile >= late.max_per_tile
 
 
 def test_view_cache_decode_once(tmp_path: Path, monkeypatch) -> None:

@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
 )
 
 from instasplat.gui.geometry import (
-    PointCloud,
     discover_colmap_model,
     discover_splat_ply,
     find_latest_ply,

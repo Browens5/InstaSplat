@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from instasplat.metal_equirect.cameras import (
     EquirectCamera,
     build_covariance,
+    rotate_covariances,
     unscented_equirect_project,
 )
 
@@ -107,9 +108,15 @@ def rasterize_equirect(
             f_rest = f_rest[idx]
         n = max_gaussians
 
-    means_cam = (R_w2c @ means.T).T + t_w2c
+    # Ensure camera pose tensors live with Gaussians (mixed CPU/MPS → MPS crash)
+    if R_w2c.device != means.device or R_w2c.dtype != means.dtype:
+        R_w2c = R_w2c.to(device=means.device, dtype=means.dtype)
+    if t_w2c.device != means.device or t_w2c.dtype != means.dtype:
+        t_w2c = t_w2c.to(device=means.device, dtype=means.dtype)
+
+    means_cam = means @ R_w2c.transpose(0, 1) + t_w2c
     cov_w = build_covariance(scales, quats)
-    cov_cam = torch.einsum("ij,njk,lk->nil", R_w2c, cov_w, R_w2c)
+    cov_cam = rotate_covariances(R_w2c, cov_w)
 
     mean_2d, cov_2d, valid = unscented_equirect_project(means_cam, cov_cam, camera)
     dirs = means_cam / (torch.linalg.norm(means_cam, dim=-1, keepdim=True) + 1e-8)

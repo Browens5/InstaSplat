@@ -93,6 +93,33 @@ def test_load_equirect_dataset_from_cubemap_names(tmp_path: Path) -> None:
     assert ds.points_xyz.shape[0] == 20
 
 
+def test_gaussians_from_points_uniform_device() -> None:
+    """All parameters must share the request device (MPS mixed-device crash)."""
+    xyz = np.random.randn(32, 3).astype(np.float32)
+    rgb = np.random.rand(32, 3).astype(np.float32)
+    for dev in (torch.device("cpu"),):
+        model = gaussians_from_points(xyz, rgb, sh_degree=1, max_points=32, device=dev)
+        devices = {p.device for p in model.parameters()}
+        assert devices == {dev}
+        assert model.f_rest.device == dev
+
+
+def test_rotate_covariances_matches_r_sigma_rt() -> None:
+    from instasplat.metal_equirect.cameras import rotate_covariances
+
+    torch.manual_seed(0)
+    R = torch.linalg.qr(torch.randn(3, 3)).Q
+    if torch.det(R) < 0:
+        R = R.clone()
+        R[:, 0] = -R[:, 0]
+    cov_w = torch.eye(3).unsqueeze(0) * torch.tensor([0.1, 0.2, 0.3]).view(1, 3, 1)
+    cov_w = cov_w + 0.01 * torch.randn(5, 3, 3)
+    cov_w = 0.5 * (cov_w + cov_w.transpose(-1, -2))
+    got = rotate_covariances(R, cov_w)
+    ref = torch.einsum("ij,njk,lk->nil", R, cov_w, R)
+    torch.testing.assert_close(got, ref, atol=1e-5, rtol=1e-5)
+
+
 def test_rasterize_tile_and_oit_backward() -> None:
     cam = EquirectCamera(48, 24)
     n = 12

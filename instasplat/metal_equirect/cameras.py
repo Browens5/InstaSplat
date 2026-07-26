@@ -87,7 +87,19 @@ def build_covariance(
     """(N,3) scales + (N,4) wxyz → (N,3,3) Σ."""
     R = quat_to_rotmat_torch(quats)
     S = torch.diag_embed(scales.clamp(min=1e-6))
+    # Batched matmul (MPS-safe; avoids einsum placeholder bugs)
     return R @ S @ S.transpose(-1, -2) @ R.transpose(-1, -2)
+
+
+def rotate_covariances(R_w2c: torch.Tensor, cov_w: torch.Tensor) -> torch.Tensor:
+    """
+    Σ_cam = R Σ_w Rᵀ for a batch of covariances.
+
+    ``R_w2c`` is (3, 3), ``cov_w`` is (N, 3, 3). Uses matmul instead of einsum
+    so Apple MPS does not hit “Placeholder storage has not been allocated”.
+    """
+    # (3,3) @ (N,3,3) → (N,3,3); then @ Rᵀ
+    return (R_w2c @ cov_w) @ R_w2c.transpose(0, 1)
 
 
 def unscented_equirect_project(
@@ -112,12 +124,11 @@ def unscented_equirect_project(
     lam = alpha**2 * (dim + 2) - dim  # κ=2, β unused for mean/cov here
     scale = dim + lam
     eye = torch.eye(dim, device=device, dtype=dtype).expand(n, dim, dim)
-    # Cholesky of scale * cov
+    # Cholesky of scale * cov (diagonal fallback if PSD / backend fails)
     cov_s = cov_cam + eye * 1e-8
     try:
         chol = torch.linalg.cholesky(cov_s * scale)
     except RuntimeError:
-        # Fallback: diagonal
         diag = torch.diagonal(cov_s, dim1=-2, dim2=-1).clamp(min=1e-8)
         chol = torch.diag_embed(torch.sqrt(diag * scale))
 
@@ -163,7 +174,10 @@ def unscented_equirect_project(
     diff_u = diff[..., 0:1]
     diff_u = diff_u - w * torch.round(diff_u / w)
     diff = torch.cat([diff_u, diff[..., 1:2]], dim=-1)
-    cov_2d = torch.einsum("i,nij,nik->njk", weights, diff, diff)
+    # Weighted outer products without einsum (MPS-friendly):
+    # Σ = Σ_i w_i · δ_i δ_iᵀ
+    weighted = diff * weights.view(1, -1, 1)
+    cov_2d = weighted.transpose(-1, -2) @ diff
     # Floor for numerical stability + PSD nudge
     eye2 = torch.eye(2, device=device, dtype=dtype).expand(n, 2, 2)
     cov_2d = cov_2d + eye2 * 0.25

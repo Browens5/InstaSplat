@@ -91,9 +91,12 @@ train:
 
 | Device | Behavior |
 |--------|----------|
-| Apple Silicon + MPS | Default training device |
-| CPU | Fallback / CI |
+| Apple Silicon + MPS | Default training device (all Gaussian params on MPS) |
+| CPU | Auto-fallback if an MPS probe forward fails; also CI |
 | Metal metallib | Compiled on macOS when `xcrun metal` exists; torch UT path always works |
+
+Covariance transforms use batched matmul (`R Σ Rᵀ`), not `einsum`, to avoid
+PyTorch MPS “Placeholder storage has not been allocated” crashes.
 
 Cloud CUDA **gsplat 3DGUT** remains optional for scale (`cloud_job.json`).
 

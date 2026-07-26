@@ -43,6 +43,54 @@ def pick_device(prefer_mps: bool = True) -> torch.device:
     return torch.device("cpu")
 
 
+def _model_param_devices(model: GaussianModel) -> set[str]:
+    return {str(p.device) for p in model.parameters()}
+
+
+def _probe_rasterize(
+    model: GaussianModel,
+    device: torch.device,
+    *,
+    with_eval3d: bool,
+    composite: str,
+) -> None:
+    """One tiny forward+backward to surface MPS/device bugs before the long run."""
+    cam = EquirectCamera(32, 16)
+    R = torch.eye(3, device=device, dtype=model.means.dtype)
+    t = torch.zeros(3, device=device, dtype=model.means.dtype)
+    n = min(model.n, 64)
+    f_rest = (
+        model.f_rest[:n]
+        if model.sh_degree >= 1 and isinstance(model.f_rest, torch.nn.Parameter)
+        else model.f_dc.new_zeros(n, 0)
+    )
+    pred = rasterize_equirect(
+        model.means[:n],
+        model.get_quats()[:n],
+        model.get_scales()[:n],
+        model.get_opacity()[:n],
+        model.f_dc[:n],
+        f_rest,
+        R,
+        t,
+        cam,
+        sh_degree=model.sh_degree,
+        max_gaussians=n,
+        with_eval3d=with_eval3d,
+        composite=composite,
+        tile_size=8,
+        max_per_tile=16,
+    )
+    loss = pred.mean()
+    loss.backward()
+    model.zero_grad(set_to_none=True)
+    if device.type == "mps" and hasattr(torch, "mps"):
+        try:
+            torch.mps.synchronize()
+        except Exception:
+            pass
+
+
 def train_equirect(
     dataset: EquirectDataset,
     export_dir: Path,
@@ -73,6 +121,7 @@ def train_equirect(
     - MCMC densify/prune with grad accumulation
     - SH degree warmup schedule
     - Preview JPEG + progress callback for GUI / logs
+    - MPS probe with automatic CPU fallback on device bugs
     """
     device = pick_device(prefer_mps=prefer_mps)
     export_dir = Path(export_dir)
@@ -96,6 +145,35 @@ def train_equirect(
         max_points=max_init_points,
         device=device,
     )
+    devices = _model_param_devices(model)
+    if len(devices) != 1:
+        raise RuntimeError(
+            f"GaussianModel parameters span multiple devices {devices}; "
+            "all must live on the training device."
+        )
+
+    # Probe MPS early; fall back to CPU if PyTorch Metal misbehaves.
+    if device.type == "mps":
+        try:
+            _probe_rasterize(
+                model, device, with_eval3d=with_eval3d, composite=composite
+            )
+        except RuntimeError as exc:
+            msg = str(exc)
+            if log:
+                log.warning(
+                    "MPS probe failed (%s); falling back to CPU for training",
+                    msg.splitlines()[0][:160],
+                )
+            device = torch.device("cpu")
+            model = gaussians_from_points(
+                dataset.points_xyz,
+                dataset.points_rgb,
+                sh_degree=0 if sh_warmup_steps > 0 else target_sh,
+                max_points=max_init_points,
+                device=device,
+            )
+
     opt = _rebuild_optimizer(model, lr)
     densify_state = DensifyState()
     densify_state.reset(model.n, device)

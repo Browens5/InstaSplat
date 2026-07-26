@@ -242,6 +242,12 @@ def run(
         help="Enable Mac long-360 tiled mode (alias of mac-360 defaults)",
     ),
     tiled: bool = typer.Option(False, "--tiled", help="Alias for enabling chunk.mode=tiled"),
+    chunks: int | None = typer.Option(
+        None,
+        "--chunks",
+        help="Preselect exact number of tiles (0/omit = auto from duration_sec)",
+        min=0,
+    ),
     no_refine: bool = typer.Option(False, "--no-refine", help="Disable pose refine stage"),
     streamed_lod: bool = typer.Option(
         False, "--streamed-lod", help="Also export lod-meta.json streamed SOG"
@@ -274,6 +280,7 @@ def run(
         export_formats=export_formats,
         dry_run=dry_run,
         large_8k=large_8k or tiled,
+        chunks=chunks,
         no_refine=no_refine,
         streamed_lod=streamed_lod,
         no_cloud_manifest=no_cloud_manifest,
@@ -294,6 +301,12 @@ def mac_360(
     project_name: str = typer.Option("walk_360", "--name", "-n"),
     no_mask: bool = typer.Option(False, help="Disable YOLO people masking"),
     dry_run: bool = typer.Option(False, help="Plan chunks + preflight only"),
+    chunks: int | None = typer.Option(
+        None,
+        "--chunks",
+        help="Preselect exact number of tiles (omit = auto from duration_sec)",
+        min=0,
+    ),
     allow_unstitched: bool = typer.Option(False, "--allow-unstitched"),
     allow_partial_merge: bool = typer.Option(False, "--allow-partial-merge"),
     formats: str = typer.Option("ply,sog,spz", "--formats"),
@@ -324,6 +337,7 @@ def mac_360(
         export_formats=formats,
         dry_run=dry_run,
         large_8k=True,
+        chunks=chunks,
         no_refine=False,
         streamed_lod=True,
         no_cloud_manifest=False,
@@ -358,6 +372,7 @@ def _build_run_config(
     export_formats: str | None,
     dry_run: bool,
     large_8k: bool,
+    chunks: int | None = None,
     no_refine: bool,
     streamed_lod: bool,
     no_cloud_manifest: bool,
@@ -392,6 +407,12 @@ def _build_run_config(
         cfg.enable_mac_long_360_defaults()
 
     cfg.train.backend = "metal_equirect"
+    if chunks is not None:
+        cfg.chunk.num_chunks = max(0, int(chunks))
+        if cfg.chunk.num_chunks > 0:
+            cfg.chunk.enabled = True
+            if cfg.mode != "tiled":
+                cfg.mode = "tiled"
     if no_refine:
         cfg.refine.enabled = False
     if streamed_lod:

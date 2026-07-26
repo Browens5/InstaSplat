@@ -69,6 +69,32 @@ def test_build_config_includes_train_options(tmp_path) -> None:
     _ = app
 
 
+def test_build_config_preselects_chunk_count(tmp_path) -> None:
+    from PySide6.QtWidgets import QApplication
+
+    from instasplat.gui.app import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow()
+    win.large_8k_cb.setChecked(True)
+    win._select_mode_stages()
+    video = tmp_path / "eq.mp4"
+    video.write_bytes(b"fake")
+    win.input_edit.setText(str(video))
+    win.output_edit.setText(str(tmp_path / "runs"))
+    win.name_edit.setText("gui_chunks")
+    win.num_chunks.setValue(6)
+    cfg = win._build_config()
+    assert cfg.mode == "tiled"
+    assert cfg.chunk.enabled
+    assert cfg.chunk.num_chunks == 6
+    win._apply_config_to_form(cfg)
+    assert win.num_chunks.value() == 6
+    win.close()
+    del win
+    _ = app
+
+
 def test_gui_max_steps_allows_1m_in_k() -> None:
     from pathlib import Path
     import tempfile

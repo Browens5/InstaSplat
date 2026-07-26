@@ -84,6 +84,8 @@ reconstructs each tile on Metal, aligns with **GPS + gyro**, then merges:
 
 ```bash
 instasplat mac-360 -i ./capture_equirect_8k.mp4 -o ./runs -n beach_walk
+# Or preselect an exact tile count:
+instasplat mac-360 -i ./capture_equirect_8k.mp4 --chunks 8
 ```
 
 That command **is** the full Mac pipeline for large captures.

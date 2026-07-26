@@ -510,6 +510,15 @@ class MainWindow(QMainWindow):
             "Split long captures into overlapping tiles, train each, then merge."
         )
         mode_form.addRow(self.large_8k_cb)
+        self.num_chunks = QSpinBox()
+        self.num_chunks.setRange(0, 500)
+        self.num_chunks.setValue(0)
+        self.num_chunks.setSpecialValueText("Auto")
+        self.num_chunks.setToolTip(
+            "Number of tiles to plan. Auto (0) sizes tiles from duration/overlap; "
+            "set a count (e.g. 8) to preselect exactly that many overlapping chunks."
+        )
+        mode_form.addRow("Chunks", self.num_chunks)
         self.fps = QDoubleSpinBox()
         self.fps.setRange(0.1, 30.0)
         self.fps.setValue(6.0)
@@ -843,6 +852,7 @@ class MainWindow(QMainWindow):
         self.name_edit.setText(cfg.project_name)
         tiled = cfg.mode == "tiled" or cfg.chunk.enabled
         self.large_8k_cb.setChecked(tiled)
+        self.num_chunks.setValue(max(0, min(500, int(getattr(cfg.chunk, "num_chunks", 0) or 0))))
         if tiled:
             self.fps.setValue(float(cfg.chunk.base_fps))
         else:
@@ -1031,9 +1041,11 @@ class MainWindow(QMainWindow):
             cfg.mode = "tiled"
             cfg.chunk.enabled = True
             cfg.chunk.base_fps = float(self.fps.value())
+            cfg.chunk.num_chunks = int(self.num_chunks.value())
         else:
             cfg.mode = "single"
             cfg.chunk.enabled = False
+            cfg.chunk.num_chunks = 0
             cfg.extract.fps = float(self.fps.value())
 
         cfg.stages = stages

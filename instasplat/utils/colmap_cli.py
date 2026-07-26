@@ -25,8 +25,11 @@ class ColmapCliCaps:
     match_use_gpu: str
     modern: bool  # True when FeatureExtraction.* namespace exists
     supports_equirectangular: bool = False
+    supports_global_mapper: bool = False
     version: tuple[int, ...] | None = None
     colmap_bin: str = "colmap"
+    # Optional global_mapper BA flags present in this build (name → value for equirect)
+    global_ba_disable_flags: tuple[str, ...] = ()
 
 
 def _help_text(colmap: str, command: str) -> str:
@@ -150,6 +153,44 @@ def detect_colmap_caps(colmap_bin: str | None = None) -> ColmapCliCaps:
 
     supports_eq = _detect_equirect_support(colmap, extract_help, version)
 
+    # GLOMAP lives as ``colmap global_mapper`` in modern COLMAP builds
+    global_help = _help_text(colmap, "global_mapper")
+    top_help = version_blob
+    supports_global = (
+        "global_mapper" in top_help.lower()
+        or "GlobalMapper" in global_help
+        or "database_path" in global_help
+    )
+    ba_flags: list[str] = []
+    # Disable intrinsic refine for EQUIRECTANGULAR (no focal / PP / distortion)
+    for flag in (
+        "--BundleAdjustment.refine_focal_length",
+        "--GlobalMapper.ba_refine_focal_length",
+        "--Mapper.ba_refine_focal_length",
+    ):
+        key = flag.lstrip("-")
+        if key in global_help or flag[2:] in global_help:
+            ba_flags.extend([flag, "0"])
+            break
+    for flag in (
+        "--BundleAdjustment.refine_principal_point",
+        "--GlobalMapper.ba_refine_principal_point",
+        "--Mapper.ba_refine_principal_point",
+    ):
+        key = flag.lstrip("-")
+        if key in global_help or flag[2:] in global_help:
+            ba_flags.extend([flag, "0"])
+            break
+    for flag in (
+        "--BundleAdjustment.refine_extra_params",
+        "--GlobalMapper.ba_refine_extra_params",
+        "--Mapper.ba_refine_extra_params",
+    ):
+        key = flag.lstrip("-")
+        if key in global_help or flag[2:] in global_help:
+            ba_flags.extend([flag, "0"])
+            break
+
     return ColmapCliCaps(
         max_image_size=max_image_size,
         extract_use_gpu=extract_use_gpu,
@@ -157,8 +198,10 @@ def detect_colmap_caps(colmap_bin: str | None = None) -> ColmapCliCaps:
         match_use_gpu=match_use_gpu,
         modern=modern or (not legacy_size),
         supports_equirectangular=supports_eq,
+        supports_global_mapper=supports_global,
         version=version,
         colmap_bin=colmap,
+        global_ba_disable_flags=tuple(ba_flags),
     )
 
 

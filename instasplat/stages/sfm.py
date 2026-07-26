@@ -342,17 +342,46 @@ def run_colmap(
             if child.is_dir():
                 shutil.rmtree(child)
 
-    map_cmd = [
-        colmap or "colmap",
-        "mapper",
-        "--database_path",
-        str(db),
-        "--image_path",
-        str(image_dir),
-        "--output_path",
-        str(sparse),
-    ]
-    run_cmd(map_cmd, log_file=paths.logs / "colmap_mapper.log", dry_run=cfg.dry_run)
+    mapper_kind = (cfg.sfm.mapper or "incremental").lower()
+    if mapper_kind == "global":
+        if not caps.supports_global_mapper and not cfg.dry_run:
+            log.warning(
+                "sfm.mapper=global requested but this COLMAP has no global_mapper "
+                "(need COLMAP with integrated GLOMAP). Falling back to incremental."
+            )
+            mapper_kind = "incremental"
+        else:
+            log.info(
+                "Running COLMAP global_mapper (GLOMAP) — faster on well-connected sets"
+            )
+
+    if mapper_kind == "global":
+        map_cmd = [
+            colmap or "colmap",
+            "global_mapper",
+            "--database_path",
+            str(db),
+            "--image_path",
+            str(image_dir),
+            "--output_path",
+            str(sparse),
+        ]
+        # EQUIRECTANGULAR has no focal/PP/distortion to refine
+        if camera_model.upper() == "EQUIRECTANGULAR" and caps.global_ba_disable_flags:
+            map_cmd.extend(list(caps.global_ba_disable_flags))
+        run_cmd(map_cmd, log_file=paths.logs / "colmap_global_mapper.log", dry_run=cfg.dry_run)
+    else:
+        map_cmd = [
+            colmap or "colmap",
+            "mapper",
+            "--database_path",
+            str(db),
+            "--image_path",
+            str(image_dir),
+            "--output_path",
+            str(sparse),
+        ]
+        run_cmd(map_cmd, log_file=paths.logs / "colmap_mapper.log", dry_run=cfg.dry_run)
 
     # Prefer model 0; if only others exist, pick largest
     if cfg.dry_run:
@@ -361,7 +390,10 @@ def run_colmap(
 
     models = [p for p in sparse.iterdir() if p.is_dir()]
     if not models:
-        raise RuntimeError("COLMAP mapper produced no models")
+        raise RuntimeError(
+            f"COLMAP {mapper_kind} mapper produced no models "
+            f"(see logs/colmap_{'global_mapper' if mapper_kind == 'global' else 'mapper'}.log)"
+        )
     if model0 not in models:
         # Use first model
         model0 = min(models)

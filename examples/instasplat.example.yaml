@@ -20,6 +20,7 @@ sfm:
   mode: equirectangular          # full 360 throughout SfM + train (COLMAP ≥ 4.1)
   camera_model: EQUIRECTANGULAR
   matcher: sequential
+  mapper: incremental            # incremental (default) | global (GLOMAP)
   sequential_overlap: 15
   quality: high
   use_gpu: false

@@ -19,6 +19,7 @@ ExportFormat = Literal[
 ]
 
 SfMMode = Literal["perspective_cubemap", "equirectangular", "auto"]
+SfMMapper = Literal["incremental", "global"]
 ScaleMode = Literal["none", "known_distance", "gps", "stereo_baseline"]
 StitchMode = Literal["studio_mp4", "mediasdk", "ffmpeg_fallback", "prestitched"]
 PipelineMode = Literal["single", "tiled"]
@@ -108,6 +109,8 @@ class SfMConfig:
     face_resolution: int = 1024
     matcher: Literal["exhaustive", "sequential", "vocab_tree"] = "sequential"
     sequential_overlap: int = 15
+    # Reconstruction algorithm: incremental (default) or global (GLOMAP in COLMAP ≥ 4.x)
+    mapper: SfMMapper = "incremental"
     quality: Literal["low", "medium", "high", "extreme"] = "high"
     use_gpu: bool = False  # COLMAP GPU often unavailable on Mac; CPU is fine
     # If COLMAP fails, synthesize poses from gyro/GPS (LongSplat / on-the-fly style)
@@ -270,6 +273,7 @@ class PipelineConfig:
         self.sfm.quality = "high"
         self.sfm.matcher = "sequential"
         self.sfm.sequential_overlap = 18
+        self.sfm.mapper = "incremental"
         self.sfm.telemetry_fallback = True
         self.train.max_resolution = 1024
         self.train.total_steps = 15_000
@@ -414,6 +418,7 @@ sfm:
   mode: equirectangular     # equirectangular (default) | auto | perspective_cubemap
   camera_model: EQUIRECTANGULAR
   matcher: sequential
+  mapper: incremental       # incremental (default) | global (GLOMAP / COLMAP global_mapper)
   quality: high
   # face_resolution only used if mode=perspective_cubemap
 
@@ -493,6 +498,7 @@ sfm:
   mode: equirectangular
   camera_model: EQUIRECTANGULAR
   matcher: sequential
+  mapper: incremental
   quality: high
 
 scale:

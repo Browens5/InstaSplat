@@ -530,6 +530,15 @@ class MainWindow(QMainWindow):
         )
         opts_form.addRow("SfM mode", self.sfm_mode)
 
+        self.sfm_mapper = QComboBox()
+        self.sfm_mapper.addItems(["incremental", "global"])
+        self.sfm_mapper.setToolTip(
+            "incremental (default): classic COLMAP mapper.\n"
+            "global: COLMAP global_mapper (GLOMAP) — often faster on large, "
+            "well-connected tiles. Needs COLMAP with integrated GLOMAP."
+        )
+        opts_form.addRow("SfM mapper", self.sfm_mapper)
+
         self.scale_mode = QComboBox()
         self.scale_mode.addItems(["gps", "none", "known_distance", "stereo_baseline"])
         opts_form.addRow("Metric scale", self.scale_mode)
@@ -799,6 +808,9 @@ class MainWindow(QMainWindow):
         idx = self.sfm_mode.findText(cfg.sfm.mode)
         if idx >= 0:
             self.sfm_mode.setCurrentIndex(idx)
+        idx = self.sfm_mapper.findText(cfg.sfm.mapper)
+        if idx >= 0:
+            self.sfm_mapper.setCurrentIndex(idx)
         idx = self.scale_mode.findText(cfg.scale.mode)
         if idx >= 0:
             self.scale_mode.setCurrentIndex(idx)
@@ -958,6 +970,7 @@ class MainWindow(QMainWindow):
         cfg.package.quality_report = self.cloud_cb.isChecked()
         cfg.package.cpu_lod = self.cloud_cb.isChecked()
         cfg.sfm.mode = self.sfm_mode.currentText()  # type: ignore[assignment]
+        cfg.sfm.mapper = self.sfm_mapper.currentText()  # type: ignore[assignment]
         cfg.scale.mode = self.scale_mode.currentText()  # type: ignore[assignment]
         cfg.train.total_steps = int(self.steps.value())
         cfg.export.formats = formats  # type: ignore[assignment]

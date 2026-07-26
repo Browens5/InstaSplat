@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from instasplat.config import PipelineConfig
 from instasplat.utils.paths import JobPaths
 from instasplat.utils.process import get_logger
+
+TrainProgressCb = Callable[[dict[str, Any]], None]
 
 
 @dataclass
@@ -23,7 +27,13 @@ def _find_latest_ply(export_dir: Path) -> Path | None:
     return plys[0] if plys else None
 
 
-def run_train(cfg: PipelineConfig, paths: JobPaths, model_dir: Path) -> TrainResult:
+def run_train(
+    cfg: PipelineConfig,
+    paths: JobPaths,
+    model_dir: Path,
+    *,
+    on_progress: TrainProgressCb | None = None,
+) -> TrainResult:
     from instasplat.metal_equirect import run_metal_equirect_train
     from instasplat.utils.control import get_controller
 
@@ -41,7 +51,7 @@ def run_train(cfg: PipelineConfig, paths: JobPaths, model_dir: Path) -> TrainRes
         log.info("Skipping train; found existing splat %s", existing)
         return TrainResult(export_dir, existing, "metal_equirect", "metal_equirect")
 
-    result = run_metal_equirect_train(cfg, paths, model_dir)
+    result = run_metal_equirect_train(cfg, paths, model_dir, on_progress=on_progress)
     log.info(
         "metal_equirect finished device=%s gaussians=%d loss=%.5f",
         result.device,

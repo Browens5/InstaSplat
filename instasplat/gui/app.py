@@ -44,7 +44,6 @@ from instasplat.utils.progress import (
     ProgressEvent,
     format_duration,
     live_progress_from_event,
-    stage_fraction,
 )
 from instasplat.utils.stages import ALL_STAGES, SINGLE_STAGES, STAGE_HELP, TILED_STAGES
 
@@ -930,10 +929,8 @@ class MainWindow(QMainWindow):
         cur_idx = index_of.get(ev.stage, ev.stage_index)
         detail = (ev.message or "").strip()
 
-        if ev.status == "finished":
-            cur_frac = 1.0
-        else:
-            cur_frac = stage_fraction(ev.stage_elapsed_sec, ev.stage_eta_sec)
+        # Prefer discrete work units (steps/chunks) over time-based estimates
+        cur_frac = ev.stage_frac
 
         for name, row in self.stage_rows.items():
             if name not in index_of:
@@ -951,7 +948,7 @@ class MainWindow(QMainWindow):
             else:
                 row.set_progress(0.0, state="pending")
 
-        # Sticky current-task bar — include COLMAP / phase detail
+        # Sticky current-task bar — work % when known, else stage message
         if ev.status == "finished" and cur_idx >= len(run) - 1:
             self.task_progress.setValue(1000)
             self.task_progress.setFormat("complete")
@@ -961,13 +958,30 @@ class MainWindow(QMainWindow):
         else:
             pct = int(round(cur_frac * 100))
             self.task_progress.setValue(int(cur_frac * 1000))
-            phase = detail if detail and detail.lower() != f"starting {ev.stage}" else ""
-            if phase:
-                # Keep format readable in the narrow bar
-                short = phase if len(phase) <= 56 else phase[:53] + "…"
-                self.task_progress.setFormat(f"{ev.stage} · {short}  {pct}%")
+            if (
+                ev.work_done is not None
+                and ev.work_total is not None
+                and ev.work_total > 0
+            ):
+                done_i = int(ev.work_done)
+                total_i = int(ev.work_total)
+                phase = detail if detail and detail.lower() != f"starting {ev.stage}" else ""
+                if phase and not phase.startswith("step "):
+                    short = phase if len(phase) <= 40 else phase[:37] + "…"
+                    self.task_progress.setFormat(
+                        f"{ev.stage} · {done_i}/{total_i} · {short}  {pct}%"
+                    )
+                else:
+                    self.task_progress.setFormat(
+                        f"{ev.stage} · {done_i}/{total_i}  {pct}%"
+                    )
             else:
-                self.task_progress.setFormat(f"{ev.stage}  {pct}%")
+                phase = detail if detail and detail.lower() != f"starting {ev.stage}" else ""
+                if phase:
+                    short = phase if len(phase) <= 56 else phase[:53] + "…"
+                    self.task_progress.setFormat(f"{ev.stage} · {short}  {pct}%")
+                else:
+                    self.task_progress.setFormat(f"{ev.stage}  {pct}%")
             self.task_progress.update()
 
     def _build_config(self) -> PipelineConfig:
@@ -1134,7 +1148,8 @@ class MainWindow(QMainWindow):
         ev = self._last_event
         if ev is None:
             return
-        # While a stage is running, recompute bars/ETA from wall clock every tick
+        # While running: refresh clocks / ETA. Work-unit bars stay tied to
+        # steps/% complete — live_progress_from_event will not invent progress.
         if (
             self._run_active
             and not self._paused
@@ -1152,16 +1167,22 @@ class MainWindow(QMainWindow):
             self._update_stage_bars(live)
             ev = live
         if self._paused:
+            work = ""
+            if ev.work_done is not None and ev.work_total is not None and ev.work_total > 0:
+                work = f" · {int(ev.work_done)}/{int(ev.work_total)} ({ev.stage_frac * 100:.0f}%)"
             self.eta_label.setText(
-                f"PAUSED · Task elapsed {format_duration(ev.stage_elapsed_sec)} · "
+                f"PAUSED{work} · Task elapsed {format_duration(ev.stage_elapsed_sec)} · "
                 f"Overall elapsed {format_duration(ev.overall_elapsed_sec)}"
             )
             return
+        work = ""
+        if ev.work_done is not None and ev.work_total is not None and ev.work_total > 0:
+            work = f" · Work {int(ev.work_done)}/{int(ev.work_total)} ({ev.stage_frac * 100:.0f}%)"
         self.eta_label.setText(
             f"Task ETA {format_duration(ev.stage_eta_sec)} · "
             f"Overall ETA {format_duration(ev.overall_eta_sec)} · "
             f"Task elapsed {format_duration(ev.stage_elapsed_sec)} · "
-            f"Overall elapsed {format_duration(ev.overall_elapsed_sec)}"
+            f"Overall elapsed {format_duration(ev.overall_elapsed_sec)}{work}"
         )
 
     def _on_finished(self, ok: bool, message: str) -> None:

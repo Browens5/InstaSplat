@@ -1,4 +1,4 @@
-"""Tests for pause control and progress ETA helpers."""
+"""Tests for pause control and progress ETA / work-unit helpers."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from instasplat.utils.progress import (
     format_duration,
     live_progress_from_event,
     stage_fraction,
+    work_fraction,
 )
 
 
@@ -27,6 +28,14 @@ def test_stage_fraction() -> None:
     assert stage_fraction(100, 0) == 0.99
 
 
+def test_stage_fraction_prefers_work_units() -> None:
+    # Time would say ~50%, work says 20%
+    frac = stage_fraction(50, 50, work_done=200, work_total=1000)
+    assert abs(frac - 0.2) < 1e-6
+    assert work_fraction(3, 10) == 0.3
+    assert work_fraction(None, 10) is None
+
+
 def test_stage_tracker_eta() -> None:
     tr = StageProgressTracker(stages=["ingest", "train", "export"])
     ev = tr.start_stage("ingest", 0)
@@ -38,6 +47,33 @@ def test_stage_tracker_eta() -> None:
     assert "Finished ingest" in done.message
     line = done.terminal_line()
     assert "elapsed" in line
+
+
+def test_report_work_drives_stage_frac() -> None:
+    tr = StageProgressTracker(stages=["train", "export"])
+    tr.start_stage("train", 0)
+    ev = tr.report_work(250, 1000, "step 250/1000")
+    assert ev.work_done == 250
+    assert ev.work_total == 1000
+    assert abs(ev.stage_frac - 0.25) < 1e-6
+    assert abs(ev.work_frac - 0.25) < 1e-6
+    # overall = stage0 base (0) + 0.25/2 stages
+    assert 0.10 < ev.overall_frac < 0.20
+    assert "250/1000" in ev.terminal_line()
+
+
+def test_live_progress_preserves_work_frac() -> None:
+    """Wall-clock ticks must not invent progress when work units are set."""
+    tr = StageProgressTracker(stages=["train"])
+    tr.start_stage("train", 0)
+    ev = tr.report_work(100, 1000, "step 100/1000")
+    t0 = time.time() - 600.0  # pretend 10 minutes elapsed
+    live = live_progress_from_event(ev, stage_wall_t0=t0, run_wall_t0=t0)
+    assert live.work_done == 100
+    assert live.work_total == 1000
+    assert abs(live.stage_frac - 0.1) < 1e-6
+    # Without work units, time would push the bar much higher than 10%
+    assert live.overall_frac < 0.15
 
 
 def test_heartbeat_is_quiet_and_advances_elapsed() -> None:
@@ -122,4 +158,3 @@ def test_controller_stop_raises() -> None:
     except PipelineStopped:
         raised = True
     assert raised
-

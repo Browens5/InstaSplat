@@ -260,6 +260,23 @@ class Pipeline:
         except Exception:  # noqa: BLE001
             pass
 
+    def report_work(
+        self,
+        done: float,
+        total: float,
+        message: str | None = None,
+        *,
+        quiet: bool = True,
+    ) -> None:
+        """Publish discrete work progress (train steps, chunks, …) for the task bar."""
+        if self._tracker is None:
+            return
+        try:
+            ev = self._tracker.report_work(done, total, message, quiet=quiet)
+            self.on_progress(ev)
+        except Exception:  # noqa: BLE001
+            pass
+
     def _apply_metal_defaults(self) -> None:
         if not self.cfg.metal.prefer_metal:
             return
@@ -347,7 +364,27 @@ class Pipeline:
             result.refine = run_refine(cfg, paths, model)
         elif name == "train":
             model = self._active_model(result)
-            result.train = run_train(cfg, paths, model)
+
+            def _train_progress(ev: dict) -> None:
+                step = int(ev.get("step", 0) or 0)
+                total = int(ev.get("total_steps", 0) or 0)
+                if total <= 0:
+                    return
+                loss = ev.get("loss")
+                phase = ev.get("phase") or ""
+                msg = f"step {step}/{total}"
+                if phase:
+                    msg = f"{msg} · {phase}"
+                if loss is not None:
+                    try:
+                        msg = f"{msg} · loss={float(loss):.4f}"
+                    except (TypeError, ValueError):
+                        pass
+                # Log milestones; quiet otherwise so the bar stays smooth
+                quiet = not (step == 1 or step == total or step % 100 == 0)
+                self.report_work(step, total, msg, quiet=quiet)
+
+            result.train = run_train(cfg, paths, model, on_progress=_train_progress)
         elif name == "preflight":
             from instasplat.utils.preflight import run_preflight
 
@@ -371,23 +408,38 @@ class Pipeline:
             self._manifest = run_plan_chunks(cfg, paths)
         elif name == "process_chunks":
             manifest = self._load_manifest()
+            n_chunks = max(1, len(manifest.chunks))
+            chunk_index = {plan.chunk_id: i for i, plan in enumerate(manifest.chunks)}
+            self.report_work(0, n_chunks, f"0/{n_chunks} chunks", quiet=False)
 
             def _chunk_activity(chunk_id: str, child_ev: ProgressEvent) -> None:
                 # Surface per-tile COLMAP / train phases on the parent stage
+                idx = chunk_index.get(chunk_id, 0)
+                child_frac = 0.0
+                if child_ev.status == "finished":
+                    # Child stage finished — count as progress within this chunk only
+                    # when it's the last child stage; otherwise use work_frac / stage_frac
+                    child_frac = child_ev.stage_frac
+                elif child_ev.work_frac is not None:
+                    child_frac = child_ev.work_frac
+                else:
+                    child_frac = min(0.95, child_ev.stage_frac)
+                # Overall work = completed chunks + fraction of current chunk
+                done = float(idx) + child_frac
                 if child_ev.quiet and "COLMAP" not in (child_ev.message or ""):
-                    # Keep heartbeats light; still refresh activity string
                     msg = f"{chunk_id} · {child_ev.stage}: {child_ev.message}"
-                    self.report_activity(msg, log_once=False)
+                    self.report_work(done, n_chunks, msg, quiet=True)
                     return
                 if child_ev.stage == "sfm" or "COLMAP" in (child_ev.message or ""):
                     msg = f"{chunk_id} · {child_ev.message}"
                 else:
                     msg = f"{chunk_id} · {child_ev.stage}: {child_ev.message}"
-                self.report_activity(msg, log_once=not child_ev.quiet)
+                self.report_work(done, n_chunks, msg, quiet=child_ev.quiet)
 
             self._chunk_status = run_process_chunks(
                 cfg, paths, manifest, on_chunk_progress=_chunk_activity
             )
+            self.report_work(n_chunks, n_chunks, f"{n_chunks}/{n_chunks} chunks", quiet=False)
             if not any(self._chunk_status.values()) and not cfg.dry_run:
                 raise RuntimeError("All chunks failed during process_chunks")
         elif name == "align_chunks":

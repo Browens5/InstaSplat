@@ -35,6 +35,20 @@ class PointCloud:
         idx = np.linspace(0, self.n - 1, max_points, dtype=np.int64)
         return PointCloud(self.xyz[idx], self.rgb[idx], self.source, self.kind)
 
+    def for_display(self) -> PointCloud:
+        """
+        Flip for the GUI viewer.
+
+        COLMAP / 3DGS world frames are Y-down relative to our OpenGL-style
+        viewer (Y-up), so sparse clouds and splat centers appear upside down
+        unless we negate Y at display time. Does not mutate training data.
+        """
+        if self.n == 0:
+            return self
+        xyz = np.asarray(self.xyz, dtype=np.float32).copy()
+        xyz[:, 1] *= -1.0
+        return PointCloud(xyz, self.rgb, self.source, self.kind)
+
 
 def _read_points3d_txt_rgb(path: Path) -> PointCloud | None:
     """points3D.txt with XYZ + RGB columns."""

@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from instasplat.gui.geometry import (
+    PointCloud,
     discover_colmap_model,
     discover_splat_ply,
     load_colmap_sparse,
@@ -111,3 +112,15 @@ def test_subsample(tmp_path: Path) -> None:
     cloud = load_colmap_sparse(model, max_points=10)
     assert cloud is not None
     assert cloud.n == 10
+
+
+def test_for_display_flips_y() -> None:
+    xyz = np.array([[1.0, 2.0, 3.0], [0.0, -4.0, 5.0]], dtype=np.float32)
+    rgb = np.ones((2, 3), dtype=np.float32)
+    cloud = PointCloud(xyz, rgb, source="t", kind="points")
+    disp = cloud.for_display()
+    np.testing.assert_allclose(disp.xyz[:, 0], xyz[:, 0])
+    np.testing.assert_allclose(disp.xyz[:, 1], -xyz[:, 1])
+    np.testing.assert_allclose(disp.xyz[:, 2], xyz[:, 2])
+    # Original unchanged (training / reload path)
+    np.testing.assert_allclose(cloud.xyz[:, 1], [2.0, -4.0])

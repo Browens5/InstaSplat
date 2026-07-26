@@ -1,0 +1,22 @@
+# Optional Rust densify index helper (AbsGS clone/split selection).
+# Build: pip install maturin && maturin develop --release -m native/instasplat_densify/Cargo.toml
+# Falls back to pure PyTorch if the extension is not installed.
+
+[package]
+name = "instasplat_densify"
+version = "0.1.0"
+edition = "2021"
+description = "Fast densify index selection for InstaSplat"
+license = "MIT"
+
+[lib]
+name = "instasplat_densify"
+crate-type = ["cdylib"]
+
+[dependencies]
+numpy = "0.22"
+pyo3 = { version = "0.22", features = ["extension-module"] }
+
+[profile.release]
+lto = true
+codegen-units = 1

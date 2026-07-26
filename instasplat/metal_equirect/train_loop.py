@@ -14,7 +14,13 @@ import torch
 
 from instasplat.metal_equirect.cameras import EquirectCamera
 from instasplat.metal_equirect.dataset import EquirectDataset
-from instasplat.metal_equirect.densify import DensifyState, densify_and_prune
+from instasplat.metal_equirect.densify import (
+    DensifyState,
+    densify_and_prune,
+    densify_phase,
+    grad_threshold_at,
+    opacity_reset,
+)
 from instasplat.metal_equirect.gaussians import (
     GaussianModel,
     clamp_sh_degree,
@@ -22,6 +28,7 @@ from instasplat.metal_equirect.gaussians import (
     gaussians_from_points,
 )
 from instasplat.metal_equirect.metal_runtime import compile_metallib, metal_status
+from instasplat.metal_equirect.optim_utils import build_optimizers, step_all, zero_grad
 from instasplat.metal_equirect.rasterize import photometric_loss, rasterize_equirect
 from instasplat.metal_equirect.schedule import schedule_at_step
 from instasplat.metal_equirect.view_cache import ViewCache
@@ -247,9 +254,10 @@ def train_equirect(
     lr: float = 0.01,
     max_gaussians_render: int = 8_000,
     max_init_points: int = 40_000,
-    densify_every: int = 200,
+    densify_every: int = 100,
     densify_from: int = 100,
-    densify_until_frac: float = 0.8,
+    densify_until_frac: float = 0.6,
+    opacity_reset_every: int = 3_000,
     sh_warmup_steps: int = 500,
     with_eval3d: bool = True,
     composite: str = "oit",
@@ -265,9 +273,10 @@ def train_equirect(
     Optimize Gaussians against equirect views.
 
     Speed path:
-    - Vectorized OIT (default) + optional Metal fused forward (STE)
-    - View cache (decode panoramas once)
-    - Progressive resolution / tile schedule (coarse → fine)
+    - Vectorized OIT / optional Metal fused forward
+    - AbsGS 2D absgrad densify with Adam-preserving prune/clone/split
+    - Phased split→clone over densify window + opacity reset; optional Rust index helper
+    - View cache + progressive resolution schedule
     - Async subsampled ``live.ply`` for the GUI viewer
     """
     device = pick_device(prefer_mps=prefer_mps)
@@ -337,7 +346,7 @@ def train_equirect(
                 device=device,
             )
 
-    opt = _rebuild_optimizer(model, lr)
+    opt = build_optimizers(model, lr)
     densify_state = DensifyState()
     densify_state.reset(model.n, device)
 
@@ -385,7 +394,7 @@ def train_equirect(
         ):
             new_deg = min(target_sh, model.sh_degree + 1)
             model.set_active_sh_degree(new_deg)
-            opt = _rebuild_optimizer(model, lr)
+            opt = build_optimizers(model, lr)
             next_sh_step = step + int(sh_warmup_steps)
             if log:
                 log.info("Enabled SH degree %d at step %d", new_deg, step)
@@ -435,8 +444,8 @@ def train_equirect(
 
         cam = EquirectCamera(w, h)
 
-        opt.zero_grad(set_to_none=True)
-        pred = rasterize_equirect(
+        zero_grad(opt)
+        pred, rinfo = rasterize_equirect(
             model.means,
             model.get_quats(),
             model.get_scales(),
@@ -453,12 +462,27 @@ def train_equirect(
             tile_size=tile_size,
             max_per_tile=max_per_tile,
             prefer_metal=True,
+            return_info=True,
         )
+        mean_2d = rinfo["mean_2d"]
+        mean_2d.retain_grad()
         loss = photometric_loss(pred, rgb, cam, mask)
         loss.backward()
-        densify_state.accumulate(model)
-        opt.step()
+        densify_state.accumulate(
+            model, mean_2d=mean_2d, selected=rinfo.get("selected")
+        )
+        step_all(opt)
         last_loss = float(loss.detach().cpu())
+
+        if (
+            opacity_reset_every > 0
+            and step > densify_from
+            and step % opacity_reset_every == 0
+            and step < densify_until
+        ):
+            opacity_reset(model, opt, value=0.01)
+            if log:
+                log.info("opacity reset at step %d", step)
 
         if (
             densify_every > 0
@@ -466,16 +490,24 @@ def train_equirect(
             and step % densify_every == 0
             and step < densify_until
         ):
+            phase = densify_phase(step, densify_from, densify_until)
+            thr = grad_threshold_at(step, densify_from, densify_until)
             dstats = densify_and_prune(
                 model,
                 densify_state,
+                opt,
                 max_gaussians=max_gaussians,
+                grad_threshold=thr,
+                phase=phase,
             )
-            opt = _rebuild_optimizer(model, lr)
-            if log and (dstats["cloned"] or dstats["split"] or dstats["pruned"]):
+            if log and (
+                dstats["cloned"] or dstats["split"] or dstats["pruned"] or dstats["relocated"]
+            ):
                 log.info(
-                    "densify step %d: %s → %d gaussians",
+                    "densify step %d phase=%s thr=%.5f: %s → %d gaussians",
                     step,
+                    phase,
+                    thr,
                     dstats,
                     model.n,
                 )
@@ -557,16 +589,3 @@ def _write_preview(pred: torch.Tensor, path: Path) -> Path:
     bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
     cv2.imwrite(str(path), bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
     return path
-
-
-def _rebuild_optimizer(model: GaussianModel, lr: float) -> torch.optim.Adam:
-    params = [
-        {"params": [model.means], "lr": lr * 0.1},
-        {"params": [model.opacities], "lr": lr * 2.0},
-        {"params": [model.scales], "lr": lr * 0.5},
-        {"params": [model.quats], "lr": lr * 0.1},
-        {"params": [model.f_dc], "lr": lr},
-    ]
-    if isinstance(model.f_rest, torch.nn.Parameter) and model.f_rest.numel() > 0:
-        params.append({"params": [model.f_rest], "lr": lr * 0.25})
-    return torch.optim.Adam(params, lr=lr, eps=1e-15)

@@ -180,11 +180,13 @@ class TrainConfig:
     with_eval3d: bool = True
     composite: str = "oit"  # metal | oit | tile
     sh_warmup_steps: int = 500
-    densify_every: int = 200
+    densify_every: int = 100
     # Cap on Gaussian count per job/tile (init + densify); GUI up to 30M
     max_gaussians: int = 40_000
     # Async subsampled live.ply for the GUI viewer (steps)
     viewer_every: int = 100
+    # Periodic opacity reset (3DGS-style); 0 disables
+    opacity_reset_every: int = 3_000
 
 
 @dataclass
@@ -449,7 +451,8 @@ train:
   with_eval3d: true
   composite: metal          # metal (fused) | oit (torch) | tile
   sh_warmup_steps: 500
-  densify_every: 200
+  densify_every: 100
+  opacity_reset_every: 3000
 
 export:
   formats: [ply, sog, spz]
@@ -526,6 +529,8 @@ train:
   viewer_every: 100
   with_eval3d: true
   composite: metal
+  densify_every: 100
+  opacity_reset_every: 3000
 
 export:
   formats: [ply, sog, spz]

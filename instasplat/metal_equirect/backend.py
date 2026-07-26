@@ -109,6 +109,7 @@ def run_metal_equirect_train(
         sh_warmup_steps=int(cfg.train.sh_warmup_steps),
         densify_every=int(cfg.train.densify_every),
         prefer_mps=bool(cfg.metal.prefer_metal),
+        opacity_reset_every=int(getattr(cfg.train, "opacity_reset_every", 3000)),
         on_progress=_progress,
         log=log,
     )

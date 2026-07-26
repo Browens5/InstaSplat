@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from instasplat.config import PipelineConfig
 from instasplat.metal_equirect.dataset import load_equirect_dataset
 from instasplat.metal_equirect.train_loop import train_equirect
 from instasplat.utils.paths import JobPaths
 from instasplat.utils.process import get_logger
+
+TrainProgressCb = Callable[[dict[str, Any]], None]
 
 
 @dataclass
@@ -26,6 +30,8 @@ def run_metal_equirect_train(
     cfg: PipelineConfig,
     paths: JobPaths,
     model_dir: Path,
+    *,
+    on_progress: TrainProgressCb | None = None,
 ) -> MetalEquirectResult:
     """Train Gaussians on equirect frames using COLMAP poses."""
     log = get_logger("instasplat.metal_equirect", paths.logs / "metal_equirect.log")
@@ -83,7 +89,7 @@ def run_metal_equirect_train(
         )
 
     def _progress(ev: dict) -> None:
-        # Heartbeat for GUI / external monitors (align with viewer_every)
+        # Heartbeat JSON for the live viewer
         step = int(ev.get("step", 0) or 0)
         total = int(ev.get("total_steps", 0) or 0)
         if step % viewer_every == 0 or step == total or step == 1:
@@ -93,6 +99,12 @@ def run_metal_equirect_train(
 
                 hb.write_text(json.dumps(ev), encoding="utf-8")
             except OSError:
+                pass
+        # Forward every step to the pipeline task bar (work units)
+        if on_progress is not None:
+            try:
+                on_progress(ev)
+            except Exception:  # noqa: BLE001 — never kill train over UI
                 pass
 
     stats = train_equirect(

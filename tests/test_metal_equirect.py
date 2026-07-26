@@ -295,7 +295,7 @@ def test_densify_prunes_transparent_before_grow() -> None:
     )
     assert stats["pruned"] >= 19
     assert model.n >= 1
-    assert float(model.get_opacity().min()) > 0.005 or model.n == 1
+    assert float(model.get_opacity().detach().min()) > 0.005 or model.n == 1
 
 
 def test_densify_respects_max_gaussians_room() -> None:

@@ -90,7 +90,7 @@ Sidecar names next to the MP4: `gyro.csv`, `gps.csv`, or `<stem>.gyro.csv`.
 | Stage | Device |
 |-------|--------|
 | YOLO people masks | PyTorch **MPS** (auto CPU fallback on known MPS crashes) |
-| COLMAP EQUIRECTANGULAR SfM | CPU (Homebrew COLMAP ≥ 4.1) |
+| COLMAP EQUIRECTANGULAR SfM | CPU (Homebrew COLMAP ≥ 4.1); `sfm.mapper: incremental` default, or `global` (GLOMAP) |
 | metal_equirect train | **PyTorch MPS / Metal** (serialized per tile) |
 | splat-transform merge | CPU Node |
 

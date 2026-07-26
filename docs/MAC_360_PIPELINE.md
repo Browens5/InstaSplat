@@ -88,6 +88,7 @@ flowchart TB
 | Problem | Pipeline choice |
 |---------|-----------------|
 | COLMAP + full sphere | Native **EQUIRECTANGULAR** camera model (COLMAP ≥ 4.1) on staged panoramas |
+| Faster SfM (optional) | `sfm.mapper: global` uses COLMAP’s GLOMAP `global_mapper` (incremental remains default) |
 | Trainers ignore most of the sphere | **metal_equirect** trains on the same full panoramas (poses already 360) |
 | Long / 8K video | **Overlapping time tiles**, denser fps on turns, serialized MPS train |
 | Tile seams / drift | **GPS + gyro Sim3** align with quality gates |

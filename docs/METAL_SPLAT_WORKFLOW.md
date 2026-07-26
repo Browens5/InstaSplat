@@ -28,6 +28,7 @@ flowchart TB
 |------|---------|
 | **Equirect frames** | Full 360×180 panoramas (`01_frames/equirect/`) |
 | **EQUIRECTANGULAR SfM** | COLMAP ≥ 4.1 on full panoramas (`03_sfm/images_equirect`) |
+| **SfM mapper** | `incremental` (default) or `global` (GLOMAP / `colmap global_mapper`) |
 | **metal_equirect** | PyTorch MPS trainer on the same panoramas + COLMAP poses |
 | **Exports** | `scene.ply` (+ sog/spz via splat-transform) |
 
@@ -192,6 +193,10 @@ Viewers: PlayCanvas SuperSplat, MetalSplatter, and other Gaussian viewers.
 ## 8. Config knobs (train)
 
 ```yaml
+sfm:
+  mode: equirectangular
+  mapper: incremental       # or global (GLOMAP) for speed on large tiles
+
 train:
   backend: metal_equirect
   total_steps: 15000

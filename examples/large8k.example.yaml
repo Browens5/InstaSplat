@@ -29,6 +29,7 @@ sfm:
   mode: equirectangular
   camera_model: EQUIRECTANGULAR
   matcher: sequential
+  mapper: incremental            # or global for faster GLOMAP on large tiles
   quality: high
 
 scale:

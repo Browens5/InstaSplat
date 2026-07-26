@@ -69,6 +69,33 @@ def test_build_config_includes_train_options(tmp_path) -> None:
     _ = app
 
 
+def test_gui_max_steps_allows_1m_in_k() -> None:
+    from pathlib import Path
+    import tempfile
+
+    from PySide6.QtWidgets import QApplication
+
+    from instasplat.gui.app import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow()
+    assert win.steps.maximum() == 1_000  # 1000 k = 1,000,000 steps
+    win.steps.setValue(1_000)
+    win.large_8k_cb.setChecked(False)
+    win._select_mode_stages()
+    td = Path(tempfile.mkdtemp())
+    (td / "eq.mp4").write_bytes(b"x")
+    win.input_edit.setText(str(td / "eq.mp4"))
+    win.output_edit.setText(str(td / "runs"))
+    win.name_edit.setText("long")
+    win.max_gaussians.setValue(40)
+    cfg = win._build_config()
+    assert cfg.train.total_steps == 1_000_000
+    win.close()
+    del win
+    _ = app
+
+
 def test_gui_max_gaussians_allows_30m_in_k() -> None:
     from PySide6.QtWidgets import QApplication
 

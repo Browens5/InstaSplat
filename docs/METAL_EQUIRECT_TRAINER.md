@@ -90,9 +90,9 @@ train:
 ```
 
 GUI **Training** group exposes steps and max Gaussians in **thousands**
-(`1 k = 1,000`; max Gaussians selectable up to `30,000 k` = 30M per tile/job),
-plus SH degree and PLY export interval. The live viewer reloads a **subsampled**
-`live.ply` every `viewer_every` steps (default 100, written asynchronously).
+(`1 k = 1,000`; steps up to `1,000 k` = 1M; max Gaussians up to `30,000 k` = 30M
+per tile/job), plus SH degree and PLY export interval. The live viewer reloads a
+**subsampled** `live.ply` every `viewer_every` steps (default 100, written asynchronously).
 
 ### Speed path (Mac)
 

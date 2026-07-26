@@ -556,13 +556,14 @@ class MainWindow(QMainWindow):
         train_note.setObjectName("tagline")
         train_form.addRow(train_note)
         self.steps = QSpinBox()
-        self.steps.setRange(1, 1_000)  # displayed in thousands
+        # Displayed in thousands: 1 k = 1,000 steps; max 1,000 k = 1,000,000
+        self.steps.setRange(1, 1_000)
         self.steps.setSingleStep(1)
         self.steps.setValue(15)
         self.steps.setSuffix(" k")
         self.steps.setToolTip(
             "Optimization steps per job / tile, in thousands (1 k = 1,000). "
-            "15 k = 15,000 steps."
+            "15 k = 15,000 steps; maximum 1,000 k = 1,000,000."
         )
         train_form.addRow("Steps (k)", self.steps)
         self.max_gaussians = QSpinBox()

@@ -61,7 +61,7 @@ def run_metal_equirect_train(
 
     sh_degree = max(0, min(int(cfg.train.sh_degree), 3))
     lr = float(cfg.train.lr)
-    steps = int(cfg.train.total_steps)
+    steps = max(1_000, min(1_000_000, int(cfg.train.total_steps)))
     max_gaussians = max(1_000, min(30_000_000, int(getattr(cfg.train, "max_gaussians", 40_000))))
     export_every = max(50, min(int(cfg.train.export_every), 10_000))
     viewer_every = max(1, int(getattr(cfg.train, "viewer_every", 100)))
@@ -70,7 +70,11 @@ def run_metal_equirect_train(
         log.warning("Unknown composite=%s; using metal", composite)
         composite = "metal"
     if steps > 100_000:
-        log.warning("total_steps=%d is very high; consider 10k–30k per tile", steps)
+        log.warning(
+            "total_steps=%d is very high; consider 10k–30k per tile unless you "
+            "intentionally want a long run (max 1,000,000)",
+            steps,
+        )
     if max_gaussians > 1_000_000:
         log.warning(
             "max_gaussians=%d is very high for Metal/MPS memory; "

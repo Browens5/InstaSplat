@@ -283,6 +283,11 @@ def train_equirect(
         status = metal_status()
     if log:
         log.info("metal_runtime: %s", status)
+        if composite == "metal":
+            log.info(
+                "Fused composite path enabled (forward=%s); torch OIT for backward",
+                "metal" if status.get("dispatch") else "cpu_ref",
+            )
 
     target_sh = clamp_sh_degree(sh_degree)
     max_gaussians = max(1_000, int(max_init_points))

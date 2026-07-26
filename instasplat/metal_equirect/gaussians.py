@@ -25,23 +25,29 @@ class GaussianModel(nn.Module):
     ) -> None:
         super().__init__()
         n = means.shape[0]
+        device = means.device
+        dtype = torch.float32
+        means = means.to(device=device, dtype=dtype)
+        rgbs = rgbs.to(device=device, dtype=dtype)
+
         self.sh_degree = max(0, min(int(sh_degree), 1))
-        self.means = nn.Parameter(means.float().clone())
-        # opacity logit
-        self.opacities = nn.Parameter(torch.logit(torch.full((n,), 0.1)))
-        # log scales
-        self.scales = nn.Parameter(torch.log(torch.full((n, 3), init_scale)))
-        # identity quats wxyz
-        quats = torch.zeros(n, 4)
+        self.means = nn.Parameter(means.clone())
+        # All trainable tensors must share ``means.device`` (MPS crashes on mixed ops).
+        self.opacities = nn.Parameter(
+            torch.logit(torch.full((n,), 0.1, device=device, dtype=dtype))
+        )
+        self.scales = nn.Parameter(
+            torch.log(torch.full((n, 3), float(init_scale), device=device, dtype=dtype))
+        )
+        quats = torch.zeros(n, 4, device=device, dtype=dtype)
         quats[:, 0] = 1.0
         self.quats = nn.Parameter(quats)
-        # SH: f_dc (3) + optional f_rest (9 for degree 1)
-        f_dc = (rgbs.float().clamp(0, 1) - 0.5) / _SH_C0
+        f_dc = (rgbs.clamp(0, 1) - 0.5) / _SH_C0
         self.f_dc = nn.Parameter(f_dc)
         if self.sh_degree >= 1:
-            self.f_rest = nn.Parameter(torch.zeros(n, 9))
+            self.f_rest = nn.Parameter(torch.zeros(n, 9, device=device, dtype=dtype))
         else:
-            self.register_buffer("f_rest", torch.zeros(n, 0))
+            self.register_buffer("f_rest", torch.zeros(n, 0, device=device, dtype=dtype))
 
     @property
     def n(self) -> int:
@@ -125,8 +131,8 @@ def gaussians_from_points(
         sample = xyz[:: max(1, len(xyz) // 2000)]
         d = np.linalg.norm(sample[None, :, :] - sample[:, None, :], axis=-1)
         np.fill_diagonal(d, np.inf)
-        nn = float(np.median(d.min(axis=1)))
-        init_scale = max(nn * 0.5, 1e-3)
+        nn_dist = float(np.median(d.min(axis=1)))
+        init_scale = max(nn_dist * 0.5, 1e-3)
     else:
         init_scale = 0.05
     means = torch.from_numpy(xyz.astype(np.float32))

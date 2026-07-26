@@ -16,6 +16,19 @@ On Mac, COLMAP runs on **EQUIRECTANGULAR** panoramas (COLMAP ≥ 4.1) so every
 pixel of the 360 frame can supervise the model. Legacy cubemap `{stem}_front`
 poses are still lifted if present.
 
+## Dataset pairing
+
+COLMAP `NAME` is matched to panoramas under `01_frames/equirect` or
+`03_sfm/images_equirect` in this order:
+
+1. Exact basename (and basename of any directory prefix)
+2. Case-insensitive stem
+3. **Unique trailing frame index** — so `e_000001.jpg` pairs with
+   `frame_000001.jpg` (and the reverse)
+
+`images.bin` is read with COLMAP’s official `idddddddi` layout (int32
+`image_id`). Quaternions are unit-normalized before `qvec_to_rotmat`.
+
 ## Data flow
 
 ```text

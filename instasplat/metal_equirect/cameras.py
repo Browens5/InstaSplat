@@ -49,12 +49,19 @@ def yaw_pitch_to_rotmat(yaw_deg: float, pitch_deg: float) -> np.ndarray:
 
 
 def quat_to_rotmat_torch(q: torch.Tensor) -> torch.Tensor:
-    """(…, 4) wxyz → (…, 3, 3)."""
-    q = q / (torch.linalg.norm(q, dim=-1, keepdim=True) + 1e-8)
+    """
+    (…, 4) wxyz → (…, 3, 3) Hamilton / COLMAP convention.
+
+    Equivalent to ``instasplat.utils.scale.qvec_to_rotmat`` after unit normalize:
+    ``R = [[1-2(y²+z²), 2(xy-zw), 2(xz+yw)], …]``.
+    """
+    n = torch.linalg.norm(q, dim=-1, keepdim=True).clamp(min=1e-8)
+    q = q / n
     w, x, y, z = q.unbind(-1)
     ww, xx, yy, zz = w * w, x * x, y * y, z * z
     wx, wy, wz = w * x, w * y, w * z
     xy, xz, yz = x * y, x * z, y * z
+    # Unit-quat form: ww+xx-yy-zz == 1 - 2(yy+zz), etc.
     r00 = ww + xx - yy - zz
     r01 = 2 * (xy - wz)
     r02 = 2 * (xz + wy)
@@ -121,12 +128,18 @@ def unscented_equirect_project(
     offsets = torch.cat([zeros, pos, neg], dim=1)
     sigmas = means_cam.unsqueeze(1) + offsets  # (N, 7, 3)
 
-    # Depth validity: z > small (COLMAP +Z forward)
+    # Validity: finite camera-space means with non-zero radius from origin.
+    # Equirect has no single "near plane"; reject only degenerate / NaN means.
     depths = means_cam[:, 2]
-    valid = torch.isfinite(depths) & (torch.linalg.norm(means_cam, dim=-1) > 1e-6)
+    valid = (
+        torch.isfinite(depths)
+        & torch.isfinite(means_cam).all(dim=-1)
+        & (torch.linalg.norm(means_cam, dim=-1) > 1e-6)
+    )
 
     flat = sigmas.reshape(-1, 3)
     uv = camera.project_dirs(flat).reshape(n, 7, 2)
+    valid = valid & torch.isfinite(uv).all(dim=-1).all(dim=-1)
 
     # Wrap-aware mean for longitude (u): work in relative offsets from sigma0
     u0 = uv[:, 0, 0]
@@ -144,14 +157,16 @@ def unscented_equirect_project(
     mean_2d = (uv_adj * weights.view(1, 7, 1)).sum(dim=1)
     # Wrap u into image
     mean_2d = mean_2d.clone()
-    mean_2d[:, 0] = mean_2d[:, 0] % w
+    mean_2d[:, 0] = torch.remainder(mean_2d[:, 0], w)
 
     diff = uv_adj - mean_2d.unsqueeze(1)
     diff_u = diff[..., 0:1]
     diff_u = diff_u - w * torch.round(diff_u / w)
     diff = torch.cat([diff_u, diff[..., 1:2]], dim=-1)
     cov_2d = torch.einsum("i,nij,nik->njk", weights, diff, diff)
-    # Floor for numerical stability
+    # Floor for numerical stability + PSD nudge
     eye2 = torch.eye(2, device=device, dtype=dtype).expand(n, 2, 2)
     cov_2d = cov_2d + eye2 * 0.25
+    # Symmetrize (floating error)
+    cov_2d = 0.5 * (cov_2d + cov_2d.transpose(-1, -2))
     return mean_2d, cov_2d, valid

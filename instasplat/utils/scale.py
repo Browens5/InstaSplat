@@ -132,15 +132,44 @@ def camera_centers(images: list[dict]) -> np.ndarray:
     centers = []
     for im in images:
         q = np.array([im["qw"], im["qx"], im["qy"], im["qz"]], dtype=np.float64)
-        R = qvec_to_rotmat(q)
+        try:
+            R = qvec_to_rotmat(q)
+        except ValueError:
+            continue
         t = np.array([im["tx"], im["ty"], im["tz"]], dtype=np.float64)
+        if not np.all(np.isfinite(t)):
+            continue
         # x_cam = R * x_world + t  →  center = -R^T t
         centers.append(-R.T @ t)
+    if not centers:
+        return np.zeros((0, 3), dtype=np.float64)
     return np.asarray(centers, dtype=np.float64)
 
 
+def normalize_qvec(qvec: np.ndarray) -> np.ndarray:
+    """Unit quaternion (w, x, y, z). Raises ValueError if non-finite / near-zero."""
+    q = np.asarray(qvec, dtype=np.float64).reshape(4)
+    if not np.all(np.isfinite(q)):
+        raise ValueError("non-finite quaternion")
+    # Scale by max-abs first so huge components cannot overflow ``||q||``.
+    m = float(np.max(np.abs(q)))
+    if m < 1e-12:
+        raise ValueError("zero-norm quaternion")
+    q = q / m
+    n = float(np.linalg.norm(q))
+    if n < 1e-12:
+        raise ValueError("zero-norm quaternion")
+    return q / n
+
+
 def qvec_to_rotmat(qvec: np.ndarray) -> np.ndarray:
-    w, x, y, z = qvec
+    """
+    COLMAP/Hamilton quaternion (w, x, y, z) → 3×3 rotation matrix.
+
+    Always normalizes first so unscaled / slightly-drifted quats cannot overflow
+    the ``2*x*x`` products used in the standard conversion.
+    """
+    w, x, y, z = normalize_qvec(qvec)
     return np.array(
         [
             [1 - 2 * y * y - 2 * z * z, 2 * x * y - 2 * z * w, 2 * x * z + 2 * y * w],

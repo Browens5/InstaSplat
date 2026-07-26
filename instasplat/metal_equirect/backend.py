@@ -47,11 +47,16 @@ def run_metal_equirect_train(
     max_w = int(cfg.train.max_resolution)
     max_w = max(256, min(max_w, 4096))
     dataset = load_equirect_dataset(paths, model_dir, max_width=max_w)
+    by_index = int(getattr(dataset, "paired_by_index", 0) or 0)
+    bad_pose = int(getattr(dataset, "skipped_bad_pose", 0) or 0)
     log.info(
-        "Loaded %d equirect views from %s (max_width=%d)",
+        "Loaded %d equirect views from %s (max_width=%d, alias_index_pairs=%d, "
+        "skipped_bad_pose=%d)",
         len(dataset),
         dataset.equirect_dir,
         max_w,
+        by_index,
+        bad_pose,
     )
 
     sh_degree = int(cfg.train.sh_degree)

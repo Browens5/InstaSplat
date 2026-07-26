@@ -13,6 +13,7 @@ from instasplat.config import PipelineConfig
 from instasplat.utils.paths import JobPaths
 from instasplat.utils.process import get_logger, run_cmd
 from instasplat.utils.scale import (
+    iter_images_txt_rows,
     qvec_to_rotmat,
     read_images_txt,
 )
@@ -132,14 +133,12 @@ def _blend_poses_with_gyro_gps(
         "# IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME",
         "# POINTS2D[] as (X, Y, POINT3D_ID)",
     ]
-    # Preserve POINTS2D lines from original
-    raw = [
-        ln
-        for ln in images_txt.read_text(encoding="utf-8").splitlines()
-        if ln and not ln.startswith("#")
-    ]
+    # Preserve POINTS2D lines from original (handles empty POINTS2D rows)
+    pts_by_name = {
+        " ".join(pose.split()[9:]): pts for pose, pts in iter_images_txt_rows(images_txt)
+    }
 
-    for i, im in enumerate(images):
+    for im in images:
         name = Path(im["name"]).stem
         base = name
         for face in ("_front", "_right", "_back", "_left", "_up", "_down"):
@@ -176,9 +175,7 @@ def _blend_poses_with_gyro_gps(
             f"{t_new[0]} {t_new[1]} {t_new[2]} {im['camera_id']} {im['name']}"
         )
         lines.append(pose_line)
-        # second line: POINTS2D
-        pts_line = raw[i * 2 + 1] if i * 2 + 1 < len(raw) else ""
-        lines.append(pts_line)
+        lines.append(pts_by_name.get(im["name"], ""))
 
     out_images_txt.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return sorted(set(notes)) or ["pose_copy"]

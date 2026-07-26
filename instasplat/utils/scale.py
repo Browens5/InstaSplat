@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
 
 import numpy as np
+
+
+_IMAGE_NAME_RE = re.compile(r"\.(jpg|jpeg|png|bmp|tif|tiff)$", re.IGNORECASE)
 
 
 def read_points3d_txt(path: Path) -> dict[int, np.ndarray]:
@@ -23,16 +27,44 @@ def read_points3d_txt(path: Path) -> dict[int, np.ndarray]:
     return points
 
 
+def _is_pose_line(parts: list[str]) -> bool:
+    """True if this COLMAP text line is an IMAGE pose row (not POINTS2D)."""
+    if len(parts) < 10:
+        return False
+    name = " ".join(parts[9:])
+    if not _IMAGE_NAME_RE.search(name):
+        return False
+    try:
+        int(parts[0])
+        for p in parts[1:9]:
+            float(p)
+    except ValueError:
+        return False
+    return True
+
+
 def read_images_txt(path: Path) -> list[dict]:
-    """Parse COLMAP images.txt (pose lines only)."""
+    """
+    Parse COLMAP images.txt (pose lines only).
+
+    Correctly handles empty POINTS2D lines (common after ``model_converter`` /
+    ``ensure_images_txt``). Older parsers that dropped blank lines and stepped
+    by 2 skipped every other image or paired pose lines as POINTS2D.
+    """
     images: list[dict] = []
     if not path.exists():
         return images
-    lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln and not ln.startswith("#")]
-    # Each image = 2 lines
-    for i in range(0, len(lines), 2):
-        parts = lines[i].split()
-        if len(parts) < 10:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    i = 0
+    n = len(lines)
+    while i < n:
+        raw = lines[i]
+        i += 1
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if not _is_pose_line(parts):
             continue
         images.append(
             {
@@ -45,10 +77,54 @@ def read_images_txt(path: Path) -> list[dict]:
                 "ty": float(parts[6]),
                 "tz": float(parts[7]),
                 "camera_id": int(parts[8]),
-                "name": parts[9],
+                "name": " ".join(parts[9:]),
             }
         )
+        # Skip the following POINTS2D line when present (may be empty)
+        if i < n:
+            nxt = lines[i].strip()
+            if not nxt or nxt.startswith("#"):
+                if not nxt:
+                    i += 1
+            elif not _is_pose_line(nxt.split()):
+                i += 1
     return images
+
+
+def iter_images_txt_rows(path: Path) -> list[tuple[str, str]]:
+    """
+    Return (pose_line, points2d_line) pairs preserving POINTS2D content.
+
+    Used by scale/refine writers so empty POINTS2D rows are not dropped.
+    """
+    rows: list[tuple[str, str]] = []
+    if not path.exists():
+        return rows
+    lines = path.read_text(encoding="utf-8").splitlines()
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        i += 1
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parts = stripped.split()
+        if not _is_pose_line(parts):
+            continue
+        pts = ""
+        if i < n:
+            nxt = lines[i]
+            nxt_s = nxt.strip()
+            if not nxt_s or nxt_s.startswith("#"):
+                if not nxt_s:
+                    pts = ""
+                    i += 1
+            elif not _is_pose_line(nxt_s.split()):
+                pts = nxt_s
+                i += 1
+        rows.append((stripped, pts))
+    return rows
 
 
 def camera_centers(images: list[dict]) -> np.ndarray:
@@ -145,7 +221,6 @@ def apply_scale_to_model(src: Path, dst: Path, scale: float) -> None:
             encoding="utf-8",
         )
         # Write a 4x4 similarity transform for COLMAP model_transformer
-        # S * I, translation scaled separately is handled by scaling points/images
         transform = [
             f"{scale} 0 0 0",
             f"0 {scale} 0 0",
@@ -162,13 +237,14 @@ def apply_scale_to_model(src: Path, dst: Path, scale: float) -> None:
         "# IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME",
         "# POINTS2D[] as (X, Y, POINT3D_ID)",
     ]
-    lines = [ln for ln in images.read_text(encoding="utf-8").splitlines() if ln and not ln.startswith("#")]
-    for i in range(0, len(lines), 2):
-        parts = lines[i].split()
-        tx, ty, tz = float(parts[5]) * scale, float(parts[6]) * scale, float(parts[7]) * scale
+    for pose_line, pts_line in iter_images_txt_rows(images):
+        parts = pose_line.split()
+        tx = float(parts[5]) * scale
+        ty = float(parts[6]) * scale
+        tz = float(parts[7]) * scale
         parts[5], parts[6], parts[7] = f"{tx}", f"{ty}", f"{tz}"
         out_images.append(" ".join(parts))
-        out_images.append(lines[i + 1] if i + 1 < len(lines) else "")
+        out_images.append(pts_line)
     (dst / "images.txt").write_text("\n".join(out_images) + "\n", encoding="utf-8")
 
     out_pts = [
@@ -179,7 +255,9 @@ def apply_scale_to_model(src: Path, dst: Path, scale: float) -> None:
         if not line or line.startswith("#"):
             continue
         parts = line.split()
-        x, y, z = float(parts[1]) * scale, float(parts[2]) * scale, float(parts[3]) * scale
+        x = float(parts[1]) * scale
+        y = float(parts[2]) * scale
+        z = float(parts[3]) * scale
         parts[1], parts[2], parts[3] = f"{x}", f"{y}", f"{z}"
         out_pts.append(" ".join(parts))
     (dst / "points3D.txt").write_text("\n".join(out_pts) + "\n", encoding="utf-8")
@@ -195,14 +273,15 @@ def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * r * math.asin(math.sqrt(a))
 
 
-def gps_latlon_to_local_xyz(lat: np.ndarray, lon: np.ndarray, alt: np.ndarray | None = None) -> np.ndarray:
+def gps_latlon_to_local_xyz(
+    lat: np.ndarray, lon: np.ndarray, alt: np.ndarray | None = None
+) -> np.ndarray:
     """Convert lat/lon(/alt) to local ENU meters relative to first sample."""
     if alt is None:
         alt = np.zeros_like(lat)
     origin_lat, origin_lon, origin_alt = float(lat[0]), float(lon[0]), float(alt[0])
     xyz = np.zeros((len(lat), 3), dtype=np.float64)
     for i, (la, lo, al) in enumerate(zip(lat, lon, alt, strict=True)):
-        # Approximate local ENU
         north = haversine_m(origin_lat, origin_lon, float(la), origin_lon)
         east = haversine_m(origin_lat, origin_lon, origin_lat, float(lo))
         if la < origin_lat:

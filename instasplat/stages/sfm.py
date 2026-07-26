@@ -14,6 +14,7 @@ from instasplat.config import PipelineConfig
 from instasplat.utils.colmap_cli import (
     db_image_count,
     detect_colmap_caps,
+    equirect_requirement_message,
     list_readable_images,
     quality_feature_args,
 )
@@ -172,7 +173,7 @@ def _empty_frames_hint(paths: JobPaths, cfg: PipelineConfig) -> str:
             "Run `extract` (and `mask`) first, or open the job and continue from extract."
         )
     lines.append(
-        "Recommended SfM mode on Mac: perspective_cubemap (not equirectangular)."
+        "Default SfM mode is equirectangular (full 360 panoramas, COLMAP ≥ 4.1)."
     )
     return "\n".join(lines)
 
@@ -182,8 +183,8 @@ def _prepare_equirect_images(
 ) -> tuple[Path, Path | None, int]:
     """Stage equirect frames into a dedicated folder (not mixed with cubemap faces)."""
     log = get_logger("instasplat.sfm")
-    img_dir = paths.sfm / "images_equirect"
-    mask_dir_out = paths.sfm / "masks_equirect"
+    img_dir = paths.equirect_sfm_images
+    mask_dir_out = paths.equirect_sfm_masks
     img_dir.mkdir(parents=True, exist_ok=True)
 
     frames = sorted(
@@ -307,8 +308,8 @@ def run_colmap(
         raise RuntimeError(
             f"COLMAP feature_extractor registered 0 images from {image_dir} "
             f"(camera_model={camera_model}). "
-            "Check colmap_features.log. On Mac prefer SfM mode perspective_cubemap; "
-            "for tiled jobs run process_chunks instead of sfm."
+            "Check colmap_features.log. Ensure camera_model=EQUIRECTANGULAR and "
+            "COLMAP ≥ 4.1; for tiled jobs run process_chunks instead of top-level sfm."
         )
     log.info("Feature extraction registered %d images", n_db or len(images))
 
@@ -385,38 +386,60 @@ def run_colmap(
     return model0
 
 
+def _resolve_sfm_mode(cfg: PipelineConfig, caps) -> str:
+    """
+    Choose SfM mode. Default product path is full EQUIRECTANGULAR panoramas.
+
+    ``auto`` → equirectangular when COLMAP supports it, else raise (no silent
+    cubemap downgrade). Cubemap remains an explicit opt-in.
+    """
+    mode = cfg.sfm.mode
+    if mode == "auto":
+        if caps is not None and caps.supports_equirectangular:
+            return "equirectangular"
+        if caps is None:
+            # dry-run / missing binary — still prefer equirect staging
+            return "equirectangular"
+        raise RuntimeError(equirect_requirement_message(caps))
+    return mode
+
+
 def run_sfm(cfg: PipelineConfig, paths: JobPaths) -> SfMResult:
     paths.ensure()
     log = get_logger("instasplat.sfm", paths.logs / "sfm.log")
-    mode = cfg.sfm.mode
-    if mode == "auto":
-        mode = "perspective_cubemap"
-
     colmap = shutil.which("colmap")
     caps = detect_colmap_caps(colmap) if colmap else None
+    mode = _resolve_sfm_mode(cfg, caps)
 
-    # Native EQUIRECTANGULAR needs a new enough COLMAP; Mac default is cubemap.
     if mode == "equirectangular":
-        if caps is not None and not caps.supports_equirectangular:
-            log.warning(
-                "This COLMAP build does not advertise EQUIRECTANGULAR — "
-                "falling back to perspective_cubemap (recommended on Mac)"
-            )
-            mode = "perspective_cubemap"
-        elif not any(paths.equirect_frames.glob("*")) and (
+        if caps is not None and not caps.supports_equirectangular and not cfg.dry_run:
+            raise RuntimeError(equirect_requirement_message(caps))
+        if not any(paths.equirect_frames.glob("*")) and (
             cfg.mode == "tiled" or cfg.chunk.enabled or any(paths.chunks.glob("chunk_*"))
         ):
             raise FileNotFoundError(_empty_frames_hint(paths, cfg))
-
-    if mode == "equirectangular":
-        log.info("Running COLMAP with EQUIRECTANGULAR camera model")
+        log.info(
+            "Running COLMAP with EQUIRECTANGULAR camera model "
+            "(full 360 panoramas → SfM → metal_equirect)"
+        )
         img_dir, mask_dir, n = _prepare_equirect_images(cfg, paths)
+        # Force EQUIRECTANGULAR regardless of sfm.camera_model (pinhole is cubemap-only)
         model = run_colmap(cfg, paths, img_dir, mask_dir, "EQUIRECTANGULAR")
         return SfMResult(model, img_dir, mask_dir, mode, n)
 
-    # Default: cubemap perspective rig (works with stock Homebrew COLMAP)
+    if mode != "perspective_cubemap":
+        raise ValueError(f"Unknown sfm.mode: {mode}")
+
+    # Explicit opt-in: cubemap perspective rig (older COLMAP / debugging)
+    log.warning(
+        "sfm.mode=perspective_cubemap — remapping panoramas to pinhole faces. "
+        "Prefer equirectangular (COLMAP ≥ 4.1) for a full-360 SfM+train path."
+    )
     if not any(paths.equirect_frames.glob("*")) and not cfg.dry_run:
         raise FileNotFoundError(_empty_frames_hint(paths, cfg))
     img_dir, mask_dir, n = render_cubemaps(cfg, paths)
-    model = run_colmap(cfg, paths, img_dir, mask_dir, cfg.sfm.camera_model)
+    cam = cfg.sfm.camera_model
+    if cam.upper() == "EQUIRECTANGULAR":
+        cam = "SIMPLE_PINHOLE"
+    model = run_colmap(cfg, paths, img_dir, mask_dir, cam)
     return SfMResult(model, img_dir, mask_dir, "perspective_cubemap", n)

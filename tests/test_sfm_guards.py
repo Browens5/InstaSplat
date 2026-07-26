@@ -19,7 +19,7 @@ def test_empty_frames_hint_mentions_process_chunks(tmp_path: Path) -> None:
     (paths.chunks / "chunk_000").mkdir(parents=True)
     hint = _empty_frames_hint(paths, cfg)
     assert "process_chunks" in hint
-    assert "perspective_cubemap" in hint
+    assert "equirectangular" in hint
 
 
 def test_run_sfm_fails_fast_without_frames(tmp_path: Path) -> None:

@@ -278,10 +278,11 @@ class Pipeline:
                 fb = run_fallback_poses(cfg, paths)
                 if fb is None or fb.n_poses <= 0:
                     raise
+                img_dir = paths.resolve_sfm_image_dir(cfg.sfm.mode)
                 result.sfm = SfMResult(
                     model_dir=fb.model_dir,
-                    image_dir=paths.cubemap_images,
-                    mask_dir=paths.cubemap_masks if any(paths.cubemap_masks.glob("*.png")) else None,
+                    image_dir=img_dir,
+                    mask_dir=paths.resolve_sfm_mask_dir(cfg.sfm.mode),
                     mode="telemetry_fallback",
                     num_images=fb.n_poses,
                 )
@@ -294,16 +295,16 @@ class Pipeline:
                     if fb is not None and fb.n_poses > 0:
                         result.sfm = SfMResult(
                             model_dir=fb.model_dir,
-                            image_dir=paths.cubemap_images,
-                            mask_dir=None,
+                            image_dir=paths.resolve_sfm_image_dir(cfg.sfm.mode),
+                            mask_dir=paths.resolve_sfm_mask_dir(cfg.sfm.mode),
                             mode="telemetry_fallback",
                             num_images=fb.n_poses,
                         )
                     elif not has:
                         raise RuntimeError(
                             "SfM produced no usable model (and telemetry fallback had 0 poses). "
-                            "For tiled jobs run process_chunks; for single-mode use "
-                            "perspective_cubemap after extract/mask."
+                            "For tiled jobs run process_chunks; for single-mode ensure "
+                            "extract/mask ran and COLMAP ≥ 4.1 with EQUIRECTANGULAR support."
                         )
         elif name == "scale":
             # Scale before refine so GPS/gyro blend uses metric-ish units

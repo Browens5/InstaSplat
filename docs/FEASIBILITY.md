@@ -35,8 +35,8 @@ Companion to **[MAC_360_PIPELINE.md](MAC_360_PIPELINE.md)** (need + architecture
 
 | Aspect | Assessment |
 |--------|------------|
-| Cubemap / perspective faces from equirect | **Reliable** with stock Homebrew COLMAP on Mac |
-| Native `EQUIRECTANGULAR` model | Available in newer COLMAP; may need building from source |
+| Native `EQUIRECTANGULAR` panoramas | **Required** product path — COLMAP ≥ 4.1 (`brew upgrade colmap`) |
+| Cubemap / perspective faces from equirect | Legacy opt-in (`sfm.mode: perspective_cubemap`) only |
 | Apple Silicon | CPU mapper is fine for hundreds of faces; thousands get slow |
 | Texture-poor scenes | Water, sky, snow → weak matches; gyro priors help but need custom integration |
 
@@ -82,7 +82,7 @@ Without one of these, the splat looks right but is **not** metrically true.
 | 5 min walk, 8K | Heavy disk | Heavy | Heavy CPU | Heavy; may prefer cloud |
 | 20 min tour | Usually too much locally | Batch/cloud | Cloud recommended | Cloud or chunked scenes |
 
-Rough local sweet spot: **short clips**, **2 fps or less**, **≤ ~200–400 training views** after cubemap expansion (remember: 1 equirect × 6 faces).
+Rough local sweet spot: **short clips**, **2–6 fps**, **≤ ~200–400 EQUIRECTANGULAR training views** (one panorama per frame — no ×6 cubemap expansion).
 
 For **long 8K@30** captures, use **tiled mode** (`--large-8k`): overlapping temporal chunks, gyro-adaptive sampling (≈6–15 fps), per-tile metal_equirect on MPS, GPS/gyro Sim3 alignment, splat-transform merge. See `docs/LARGE_8K.md`.
 

@@ -71,16 +71,29 @@ def check_colmap() -> DepStatus:
         return DepStatus(
             "colmap",
             False,
-            notes="Install via Homebrew: brew install colmap (or build from source)",
+            notes="Install via Homebrew: brew install colmap (≥ 4.1 for EQUIRECTANGULAR)",
             required_for=["sfm"],
         )
     code, out, err = _run([path, "-h"])
     available = code == 0 or "COLMAP" in (out + err)
+    from instasplat.utils.colmap_cli import detect_colmap_caps
+
+    detect_colmap_caps.cache_clear()
+    caps = detect_colmap_caps(path)
+    ver = ".".join(str(x) for x in caps.version) if caps.version else None
+    if caps.supports_equirectangular:
+        notes = f"EQUIRECTANGULAR OK (v{ver or '?'}); CPU mapping typical on Apple Silicon"
+    else:
+        notes = (
+            f"No EQUIRECTANGULAR (v{ver or '?'}). Need COLMAP ≥ 4.1 — "
+            "brew upgrade colmap. Full-360 SfM will fail until upgraded."
+        )
     return DepStatus(
         "colmap",
         available,
         path,
-        notes="CPU mapping is typical on macOS Apple Silicon",
+        version=ver,
+        notes=notes,
         required_for=["sfm"],
     )
 
@@ -190,9 +203,20 @@ def report_dict(splat_transform_bin: str = "splat-transform") -> dict[str, Any]:
 def _ready_stages(deps: list[DepStatus]) -> dict[str, bool]:
     by_name = {d.name: d for d in deps}
     train_ok = by_name.get("pytorch", DepStatus("pytorch", False)).available
+    colmap = by_name.get("colmap", DepStatus("colmap", False))
+    colmap_eq = bool(colmap.available and colmap.notes and "EQUIRECTANGULAR OK" in (colmap.notes or ""))
+    # Prefer probing caps directly when available
+    try:
+        from instasplat.utils.colmap_cli import detect_colmap_caps
+
+        if colmap.available and colmap.path:
+            colmap_eq = detect_colmap_caps(colmap.path).supports_equirectangular
+    except Exception:  # noqa: BLE001
+        pass
     mac_long_360 = (
         by_name.get("ffmpeg", DepStatus("ffmpeg", False)).available
-        and by_name.get("colmap", DepStatus("colmap", False)).available
+        and colmap.available
+        and colmap_eq
         and train_ok
         and by_name.get("splat-transform", DepStatus("splat-transform", False)).available
     )
@@ -201,11 +225,12 @@ def _ready_stages(deps: list[DepStatus]) -> dict[str, bool]:
         or by_name.get("ffmpeg", DepStatus("ffmpeg", False)).available,
         "extract": by_name.get("ffmpeg", DepStatus("ffmpeg", False)).available,
         "mask": by_name.get("ultralytics", DepStatus("ultralytics", False)).available,
-        "sfm": by_name.get("colmap", DepStatus("colmap", False)).available,
+        "sfm": colmap.available and colmap_eq,
         "train": train_ok,
         "export": by_name.get("splat-transform", DepStatus("splat-transform", False)).available,
         "official_stitch": by_name.get("MediaSDKTest", DepStatus("MediaSDKTest", False)).available,
         "mac_long_360": mac_long_360,
+        "equirectangular_sfm": colmap_eq,
     }
 
 

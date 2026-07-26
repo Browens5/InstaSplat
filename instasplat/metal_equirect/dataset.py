@@ -217,7 +217,7 @@ def load_equirect_dataset(
         raise RuntimeError(
             "No equirect training views could be paired with COLMAP images. "
             "Ensure 01_frames/equirect contains source panoramas and SfM used "
-            "cubemap faces named {stem}_front.jpg (or EQUIRECTANGULAR images)."
+            "EQUIRECTANGULAR image names (or legacy {stem}_front.jpg cubemap faces)."
         )
 
     # Apply max_width scaling metadata (actual resize at load time)

@@ -12,15 +12,16 @@ is that stage: it optimizes 3D Gaussians against full equirectangular views
 using COLMAP poses. Projection uses a **3DGUT-style Unscented Transform**
 (nonlinear camera), inspired by NVIDIA 3DGUT / [gsplat](https://github.com/nerfstudio-project/gsplat).
 
-On Mac, COLMAP usually runs on **cubemap** faces; training lifts `{stem}_front`
-poses back to panoramas so every pixel of the 360 frame can supervise the model.
+On Mac, COLMAP runs on **EQUIRECTANGULAR** panoramas (COLMAP ≥ 4.1) so every
+pixel of the 360 frame can supervise the model. Legacy cubemap `{stem}_front`
+poses are still lifted if present.
 
 ## Data flow
 
 ```text
 equirect frames (01_frames/equirect)
         +
-COLMAP sparse (cubemap-lifted or EQUIRECTANGULAR)
+COLMAP sparse (EQUIRECTANGULAR; legacy cubemap-lifted OK)
         │
         ▼
  Dataset assembly  →  GaussianModel (torch)

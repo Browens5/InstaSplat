@@ -9,12 +9,14 @@ from instasplat.utils.colmap_cli import (
     ColmapCliCaps,
     db_image_count,
     detect_colmap_caps,
+    equirect_requirement_message,
     list_readable_images,
     quality_feature_args,
 )
 
 
 MODERN_EXTRACT_HELP = """
+COLMAP 4.1.1
 --FeatureExtraction.max_image_size arg (=3200)
 --FeatureExtraction.use_gpu arg (=1)
 --SiftExtraction.max_num_features arg (=8192)
@@ -23,6 +25,7 @@ MODERN_EXTRACT_HELP = """
 """
 
 LEGACY_EXTRACT_HELP = """
+COLMAP 3.9.1
 --SiftExtraction.max_image_size arg (=3200)
 --SiftExtraction.use_gpu arg (=1)
 --SiftExtraction.max_num_features arg (=8192)
@@ -46,9 +49,13 @@ def test_detect_modern_caps(monkeypatch) -> None:
         return MODERN_MATCH_HELP
 
     monkeypatch.setattr("instasplat.utils.colmap_cli._help_text", fake_help)
+    monkeypatch.setattr(
+        "instasplat.utils.colmap_cli._binary_mentions_equirect", lambda _c: False
+    )
     caps = detect_colmap_caps("colmap-fake")
     assert caps.modern
     assert caps.supports_equirectangular
+    assert caps.version == (4, 1, 1)
     assert caps.max_image_size == "--FeatureExtraction.max_image_size"
     assert caps.extract_use_gpu == "--FeatureExtraction.use_gpu"
     assert caps.max_num_features == "--SiftExtraction.max_num_features"
@@ -69,12 +76,56 @@ def test_detect_legacy_caps(monkeypatch) -> None:
         return LEGACY_MATCH_HELP
 
     monkeypatch.setattr("instasplat.utils.colmap_cli._help_text", fake_help)
+    monkeypatch.setattr(
+        "instasplat.utils.colmap_cli._binary_mentions_equirect", lambda _c: False
+    )
+    # Swallow --version / -h probes
+    import subprocess
+
+    def fake_run(*_a, **_k):
+        class P:
+            stdout = ""
+            stderr = ""
+
+        return P()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    # Re-apply help stub used inside detect — version comes from extract_help
+    monkeypatch.setattr("instasplat.utils.colmap_cli._help_text", fake_help)
     caps = detect_colmap_caps("colmap-legacy")
     assert not caps.modern
     assert not caps.supports_equirectangular
+    assert caps.version == (3, 9, 1)
     assert caps.max_image_size == "--SiftExtraction.max_image_size"
     assert caps.extract_use_gpu == "--SiftExtraction.use_gpu"
     assert caps.match_use_gpu == "--SiftMatching.use_gpu"
+    msg = equirect_requirement_message(caps)
+    assert "brew upgrade colmap" in msg
+    assert "4.1" in msg
+    detect_colmap_caps.cache_clear()
+
+
+def test_version_alone_enables_equirect(monkeypatch) -> None:
+    """COLMAP ≥ 4.1 supports EQUIRECTANGULAR even if help omits the enum."""
+    detect_colmap_caps.cache_clear()
+
+    def fake_help(colmap: str, command: str) -> str:
+        if command == "feature_extractor":
+            return (
+                "COLMAP 4.1.0\n"
+                "--FeatureExtraction.max_image_size arg (=3200)\n"
+                "--FeatureExtraction.use_gpu arg (=1)\n"
+                "--SiftExtraction.max_num_features arg (=8192)\n"
+            )
+        return MODERN_MATCH_HELP
+
+    monkeypatch.setattr("instasplat.utils.colmap_cli._help_text", fake_help)
+    monkeypatch.setattr(
+        "instasplat.utils.colmap_cli._binary_mentions_equirect", lambda _c: False
+    )
+    caps = detect_colmap_caps("colmap-4.1")
+    assert caps.supports_equirectangular
+    assert caps.version == (4, 1, 0)
     detect_colmap_caps.cache_clear()
 
 
@@ -86,6 +137,7 @@ def test_quality_args_with_explicit_caps() -> None:
         match_use_gpu="--FeatureMatching.use_gpu",
         modern=True,
         supports_equirectangular=True,
+        version=(4, 1, 1),
     )
     assert quality_feature_args("low", caps) == [
         "--FeatureExtraction.max_image_size",

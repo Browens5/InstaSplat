@@ -43,6 +43,15 @@ def run_preflight(cfg: PipelineConfig, paths: JobPaths) -> PreflightResult:
     for name in ("ffmpeg", "colmap"):
         if not deps.get(name, None) or not deps[name].available:
             result.blocking.append(f"Missing required tool: {name}")
+    if cfg.sfm.mode in {"equirectangular", "auto"}:
+        from instasplat.utils.colmap_cli import detect_colmap_caps, equirect_requirement_message
+
+        detect_colmap_caps.cache_clear()
+        caps = detect_colmap_caps()
+        if not caps.supports_equirectangular:
+            result.blocking.append(equirect_requirement_message(caps))
+        else:
+            result.notes.append("COLMAP EQUIRECTANGULAR supported — full-360 SfM enabled")
     if not deps.get("pytorch") or not deps["pytorch"].available:
         result.blocking.append(
             "PyTorch required for metal_equirect training (and YOLO masks). "
@@ -110,11 +119,16 @@ def run_preflight(cfg: PipelineConfig, paths: JobPaths) -> PreflightResult:
         manifest = ChunkManifest.load(manifest_path)
         result.estimated_chunks = len(manifest.chunks)
         result.estimated_frames = sum(len(c.frame_times) for c in manifest.chunks)
-        # Cubemap multiplies disk ~6×
-        result.notes.append(
-            f"plan≈{result.estimated_chunks} chunks, {result.estimated_frames} equirect frames "
-            f"(~{result.estimated_frames * 6} cubemap faces)"
-        )
+        if cfg.sfm.mode == "perspective_cubemap":
+            result.notes.append(
+                f"plan≈{result.estimated_chunks} chunks, {result.estimated_frames} equirect frames "
+                f"(~{result.estimated_frames * 6} cubemap faces)"
+            )
+        else:
+            result.notes.append(
+                f"plan≈{result.estimated_chunks} chunks, {result.estimated_frames} "
+                "EQUIRECTANGULAR panoramas (full-360 SfM + train)"
+            )
         if result.estimated_frames > 4000:
             result.warnings.append(
                 "Very large frame count — expect long COLMAP+train wall time on laptop; "

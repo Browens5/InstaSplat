@@ -15,23 +15,79 @@ from instasplat.metal_equirect.cameras import (
 )
 
 
+# Inria / 3DGS SH constants
+_SH_C0 = 0.28209479177387814
+_SH_C1 = 0.4886025119029199
+_SH_C2 = (
+    1.0925484305920792,
+    -1.0925484305920792,
+    0.31539156525252005,
+    -1.0925484305920792,
+    0.5462742152960396,
+)
+_SH_C3 = (
+    -0.5900435899266435,
+    2.890651424703142,
+    -0.4570457994644658,
+    0.3731763325901154,
+    -0.4570457994644658,
+    1.445325712351571,
+    -0.5900435899266435,
+)
+
+
 def _eval_sh_color(
     f_dc: torch.Tensor,
     f_rest: torch.Tensor,
     dirs: torch.Tensor,
     sh_degree: int,
 ) -> torch.Tensor:
-    """View-dependent color from DC (+ degree-1 SH). dirs: (N,3) camera-space unit."""
-    c0 = 0.28209479177387814
-    rgb = 0.5 + c0 * f_dc
+    """
+    View-dependent color from DC + SH rest (degree 0–3).
+
+    ``f_rest`` is flat ``(N, ((d+1)²−1)*3)`` laid out as bands-major RGB
+    (same as 3DGS / gsplat). ``dirs`` are camera-space unit vectors ``(N,3)``.
+    """
+    rgb = 0.5 + _SH_C0 * f_dc
     if sh_degree < 1 or f_rest.numel() == 0:
         return rgb.clamp(0, 1)
-    c1 = 0.4886025119029199
+
+    n = f_dc.shape[0]
+    bands = f_rest.shape[-1] // 3
+    rest = f_rest.view(n, bands, 3)
     x, y, z = dirs[:, 0], dirs[:, 1], dirs[:, 2]
-    rest = f_rest.view(-1, 3, 3)
-    rgb = rgb + c1 * (-y).unsqueeze(-1) * rest[:, 0]
-    rgb = rgb + c1 * z.unsqueeze(-1) * rest[:, 1]
-    rgb = rgb + c1 * x.unsqueeze(-1) * rest[:, 2]
+
+    def _band(i: int) -> torch.Tensor:
+        if i >= bands:
+            return f_dc.new_zeros(n, 3)
+        return rest[:, i]
+
+    # Degree 1
+    rgb = rgb + _SH_C1 * (-y).unsqueeze(-1) * _band(0)
+    rgb = rgb + _SH_C1 * z.unsqueeze(-1) * _band(1)
+    rgb = rgb + _SH_C1 * x.unsqueeze(-1) * _band(2)
+    if sh_degree < 2:
+        return rgb.clamp(0, 1)
+
+    # Degree 2
+    xx, yy, zz = x * x, y * y, z * z
+    xy, yz, xz = x * y, y * z, x * z
+    rgb = rgb + _SH_C2[0] * xy.unsqueeze(-1) * _band(3)
+    rgb = rgb + _SH_C2[1] * yz.unsqueeze(-1) * _band(4)
+    rgb = rgb + _SH_C2[2] * (2.0 * zz - xx - yy).unsqueeze(-1) * _band(5)
+    rgb = rgb + _SH_C2[3] * xz.unsqueeze(-1) * _band(6)
+    rgb = rgb + _SH_C2[4] * (xx - yy).unsqueeze(-1) * _band(7)
+    if sh_degree < 3:
+        return rgb.clamp(0, 1)
+
+    # Degree 3
+    rgb = rgb + _SH_C3[0] * y.unsqueeze(-1) * (3.0 * xx - yy).unsqueeze(-1) * _band(8)
+    rgb = rgb + _SH_C3[1] * xy.unsqueeze(-1) * z.unsqueeze(-1) * _band(9)
+    rgb = rgb + _SH_C3[2] * y.unsqueeze(-1) * (4.0 * zz - xx - yy).unsqueeze(-1) * _band(10)
+    rgb = rgb + _SH_C3[3] * z.unsqueeze(-1) * (2.0 * zz - 3.0 * xx - 3.0 * yy).unsqueeze(-1) * _band(11)
+    rgb = rgb + _SH_C3[4] * x.unsqueeze(-1) * (4.0 * zz - xx - yy).unsqueeze(-1) * _band(12)
+    rgb = rgb + _SH_C3[5] * z.unsqueeze(-1) * (xx - yy).unsqueeze(-1) * _band(13)
+    rgb = rgb + _SH_C3[6] * x.unsqueeze(-1) * (xx - 3.0 * yy).unsqueeze(-1) * _band(14)
     return rgb.clamp(0, 1)
 
 

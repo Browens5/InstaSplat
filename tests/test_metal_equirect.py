@@ -104,6 +104,26 @@ def test_gaussians_from_points_uniform_device() -> None:
         assert model.f_rest.device == dev
 
 
+def test_sh_degree_3_allocates_rest_and_eval() -> None:
+    from instasplat.metal_equirect.gaussians import sh_rest_dim
+    from instasplat.metal_equirect.rasterize import _eval_sh_color
+
+    xyz = np.random.randn(8, 3).astype(np.float32)
+    rgb = np.random.rand(8, 3).astype(np.float32)
+    model = gaussians_from_points(
+        xyz, rgb, sh_degree=0, max_sh_degree=3, max_points=8, device=torch.device("cpu")
+    )
+    assert model.max_sh_degree == 3
+    assert model.sh_degree == 0
+    assert model.f_rest.shape[-1] == sh_rest_dim(3)
+    model.set_active_sh_degree(3)
+    assert model.sh_degree == 3
+    dirs = torch.nn.functional.normalize(torch.randn(8, 3), dim=-1)
+    rgb_out = _eval_sh_color(model.f_dc, model.f_rest, dirs, 3)
+    assert rgb_out.shape == (8, 3)
+    assert torch.isfinite(rgb_out).all()
+
+
 def test_rotate_covariances_matches_r_sigma_rt() -> None:
     from instasplat.metal_equirect.cameras import rotate_covariances
 

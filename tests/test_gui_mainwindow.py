@@ -24,6 +24,41 @@ def test_mainwindow_has_run_pause_stop_buttons() -> None:
     assert not win.pause_btn.isEnabled()
     assert not win.stop_btn.isEnabled()
     assert win.run_btn.isEnabled()
+    # Training controls
+    assert win.steps.value() >= 100
+    assert win.max_gaussians.value() >= 5000
+    assert 0 <= win.sh_degree.value() <= 3
+    assert 50 <= win.export_every.value() <= 1000
+    win.close()
+    del win
+    _ = app
+
+
+def test_build_config_includes_train_options(tmp_path) -> None:
+    from PySide6.QtWidgets import QApplication
+
+    from instasplat.gui.app import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow()
+    # Minimal single-mode job so _build_config does not need tiled stages only
+    win.large_8k_cb.setChecked(False)
+    win._select_mode_stages()
+    video = tmp_path / "eq.mp4"
+    video.write_bytes(b"fake")
+    win.input_edit.setText(str(video))
+    win.output_edit.setText(str(tmp_path / "runs"))
+    win.name_edit.setText("gui_train")
+    win.steps.setValue(8000)
+    win.max_gaussians.setValue(25000)
+    win.sh_degree.setValue(2)
+    win.export_every.setValue(200)
+    cfg = win._build_config()
+    assert cfg.train.total_steps == 8000
+    assert cfg.train.max_gaussians == 25000
+    assert cfg.train.sh_degree == 2
+    assert cfg.train.export_every == 200
+    assert cfg.train.viewer_every == 25
     win.close()
     del win
     _ = app

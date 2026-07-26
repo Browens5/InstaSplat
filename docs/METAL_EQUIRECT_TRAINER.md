@@ -78,14 +78,19 @@ train:
   backend: metal_equirect
   total_steps: 15000
   max_resolution: 1024
-  export_every: 2000
-  sh_degree: 1
+  export_every: 500        # incremental equirect_XXXXXX.ply (GUI: 50–1000)
+  sh_degree: 1             # 0–3 spherical harmonics
+  max_gaussians: 40000
+  viewer_every: 25         # overwrite live.ply for GUI viewer
   lr: 0.01
   with_eval3d: true
   composite: tile          # tile | oit
   sh_warmup_steps: 500
   densify_every: 200
 ```
+
+GUI **Training** group exposes steps, max Gaussians, SH degree, and PLY export
+interval. The live viewer reloads `live.ply` every `viewer_every` steps (default 25).
 
 ## Device policy
 

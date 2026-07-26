@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import os
+import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -134,8 +134,10 @@ class ViewerPanel(QWidget):
         root.addWidget(tabs, 1)
 
         self._tabs = tabs
+        self._last_train_step: int = -1
+        # ~1s poll so live.ply written every 25 train steps shows promptly
         self._poll = QTimer(self)
-        self._poll.setInterval(2000)
+        self._poll.setInterval(1000)
         self._poll.timeout.connect(lambda: self.refresh(force=False))
 
     # —— Public API ——
@@ -143,8 +145,31 @@ class ViewerPanel(QWidget):
         self._job_root = Path(job_root) if job_root else None
         self._last_loaded = None
         self._last_mtime = -1.0
+        self._last_train_step = -1
         self.refresh_artifacts()
         self.refresh(force=True)
+
+    def _read_train_heartbeat(self) -> dict | None:
+        if self._job_root is None:
+            return None
+        paths = JobPaths(self._job_root)
+        candidates = [paths.brush_export / "train_heartbeat.json"]
+        if paths.chunks.is_dir():
+            for c in sorted(paths.chunks.glob("chunk_*"), reverse=True):
+                candidates.append(c / "05_train" / "exports" / "train_heartbeat.json")
+        newest: Path | None = None
+        newest_m = -1.0
+        for p in candidates:
+            if p.is_file():
+                m = p.stat().st_mtime
+                if m > newest_m:
+                    newest, newest_m = p, m
+        if newest is None:
+            return None
+        try:
+            return json.loads(newest.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
 
     def start_live(self) -> None:
         if not self._poll.isActive():
@@ -198,6 +223,12 @@ class ViewerPanel(QWidget):
         title = ""
         mtime = -1.0
         path_key = ""
+        hb = self._read_train_heartbeat()
+        hb_step = int(hb.get("step", -1)) if hb else -1
+        # Force splat reload when training advances (live.ply every ~25 steps)
+        if mode == "splat" and hb_step >= 0 and hb_step != self._last_train_step:
+            force = True
+            self._last_train_step = hb_step
 
         if mode == "sparse":
             model = discover_colmap_model(self._job_root)
@@ -229,7 +260,13 @@ class ViewerPanel(QWidget):
 
         if cloud is not None:
             self.gl.set_cloud(cloud, title=f"{title} ({cloud.n:,} pts)")
-            self.caption.setText(self.gl.status_text())
+            cap = self.gl.status_text()
+            if hb and mode == "splat":
+                cap = (
+                    f"{cap}  ·  train step {hb.get('step')}/{hb.get('total_steps')}  "
+                    f"·  {hb.get('n_gaussians', '?')} gaussians  ·  SH {hb.get('sh_degree', '?')}"
+                )
+            self.caption.setText(cap)
             self._last_loaded = path_key
             self._last_mtime = mtime
             self.status.emit(self.caption.text())
@@ -237,7 +274,7 @@ class ViewerPanel(QWidget):
             waiting = (
                 "Waiting for COLMAP sparse model (after mapper)…"
                 if mode == "sparse"
-                else "Waiting for training PLY export…"
+                else "Waiting for training live.ply (updates every 25 steps)…"
             )
             self.gl.set_cloud(None, title=waiting)
             self.caption.setText(waiting)

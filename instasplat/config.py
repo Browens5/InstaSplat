@@ -171,14 +171,20 @@ class TrainConfig:
     backend: TrainerBackend = "metal_equirect"
     total_steps: int = 15_000
     max_resolution: int = 1024  # equirect width
-    export_every: int = 2_000
+    # Incremental named PLY checkpoints (equirect_XXXXXX.ply)
+    export_every: int = 500
     extra_args: list[str] = field(default_factory=list)
+    # Spherical harmonics degree 0–3 (view-dependent color)
     sh_degree: int = 1
     lr: float = 0.01
     with_eval3d: bool = True
     composite: str = "tile"  # tile | oit
     sh_warmup_steps: int = 500
     densify_every: int = 200
+    # Cap on Gaussian count (init + densify)
+    max_gaussians: int = 40_000
+    # Overwrite live.ply for the GUI viewer (steps)
+    viewer_every: int = 25
 
 
 @dataclass
@@ -277,6 +283,9 @@ class PipelineConfig:
         self.sfm.telemetry_fallback = True
         self.train.max_resolution = 1024
         self.train.total_steps = 15_000
+        self.train.export_every = 500
+        self.train.max_gaussians = 40_000
+        self.train.viewer_every = 25
         self.train.backend = "metal_equirect"
         self.export.formats = ["ply", "sog", "spz"]
         self.export.min_opacity = 0.05
@@ -431,8 +440,10 @@ train:
   backend: metal_equirect   # full equirect Gaussian trainer (sole backend)
   total_steps: 15000
   max_resolution: 1024      # equirect width
-  export_every: 2000
-  sh_degree: 1
+  export_every: 500         # incremental PLY every N steps (50–1000 typical)
+  sh_degree: 1              # 0–3 spherical harmonics
+  max_gaussians: 40000
+  viewer_every: 25          # overwrite live.ply for GUI viewer
   lr: 0.01
   with_eval3d: true
   composite: tile           # tile (sorted) | oit (faster)
@@ -508,7 +519,10 @@ train:
   backend: metal_equirect
   total_steps: 15000
   max_resolution: 1024
+  export_every: 500
   sh_degree: 1
+  max_gaussians: 40000
+  viewer_every: 25
   with_eval3d: true
   composite: tile
 

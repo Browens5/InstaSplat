@@ -59,9 +59,12 @@ def run_metal_equirect_train(
         bad_pose,
     )
 
-    sh_degree = int(cfg.train.sh_degree)
+    sh_degree = max(0, min(int(cfg.train.sh_degree), 3))
     lr = float(cfg.train.lr)
     steps = int(cfg.train.total_steps)
+    max_gaussians = max(1_000, int(getattr(cfg.train, "max_gaussians", 40_000)))
+    export_every = max(50, min(int(cfg.train.export_every), 10_000))
+    viewer_every = max(1, int(getattr(cfg.train, "viewer_every", 25)))
     composite = str(cfg.train.composite or "tile")
     if composite not in {"tile", "oit"}:
         log.warning("Unknown composite=%s; using tile", composite)
@@ -70,8 +73,10 @@ def run_metal_equirect_train(
         log.warning("total_steps=%d is high for metal_equirect; consider 10k–20k", steps)
 
     def _progress(ev: dict) -> None:
-        # Lightweight heartbeat file for GUI / external monitors
-        if ev.get("step", 0) % 25 == 0 or ev.get("step") == ev.get("total_steps"):
+        # Heartbeat for GUI / external monitors (align with viewer_every)
+        step = int(ev.get("step", 0) or 0)
+        total = int(ev.get("total_steps", 0) or 0)
+        if step % viewer_every == 0 or step == total or step == 1:
             hb = export_dir / "train_heartbeat.json"
             try:
                 import json
@@ -84,9 +89,11 @@ def run_metal_equirect_train(
         dataset,
         export_dir,
         total_steps=steps,
-        export_every=max(1, int(cfg.train.export_every)),
+        export_every=export_every,
+        viewer_every=viewer_every,
         sh_degree=sh_degree,
         lr=lr,
+        max_init_points=max_gaussians,
         with_eval3d=bool(cfg.train.with_eval3d),
         composite=composite,
         sh_warmup_steps=int(cfg.train.sh_warmup_steps),

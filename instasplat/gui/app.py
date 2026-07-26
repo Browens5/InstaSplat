@@ -556,17 +556,26 @@ class MainWindow(QMainWindow):
         train_note.setObjectName("tagline")
         train_form.addRow(train_note)
         self.steps = QSpinBox()
-        self.steps.setRange(100, 100_000)
-        self.steps.setSingleStep(500)
-        self.steps.setValue(15_000)
-        self.steps.setToolTip("Optimization steps per job / tile")
-        train_form.addRow("Steps", self.steps)
+        # Displayed in thousands: 1 k = 1,000 steps; max 1,000 k = 1,000,000
+        self.steps.setRange(1, 1_000)
+        self.steps.setSingleStep(1)
+        self.steps.setValue(15)
+        self.steps.setSuffix(" k")
+        self.steps.setToolTip(
+            "Optimization steps per job / tile, in thousands (1 k = 1,000). "
+            "15 k = 15,000 steps; maximum 1,000 k = 1,000,000."
+        )
+        train_form.addRow("Steps (k)", self.steps)
         self.max_gaussians = QSpinBox()
-        self.max_gaussians.setRange(5_000, 500_000)
-        self.max_gaussians.setSingleStep(5_000)
-        self.max_gaussians.setValue(40_000)
-        self.max_gaussians.setToolTip("Cap on Gaussian count (init + densify)")
-        train_form.addRow("Max Gaussians", self.max_gaussians)
+        self.max_gaussians.setRange(1, 30_000)  # thousands → up to 30M
+        self.max_gaussians.setSingleStep(5)
+        self.max_gaussians.setValue(40)
+        self.max_gaussians.setSuffix(" k")
+        self.max_gaussians.setToolTip(
+            "Max Gaussians (splats) per job / tile, in thousands (1 k = 1,000). "
+            "40 k = 40,000; maximum 30,000 k = 30,000,000."
+        )
+        train_form.addRow("Max Gaussians (k)", self.max_gaussians)
         self.sh_degree = QSpinBox()
         self.sh_degree.setRange(0, 3)
         self.sh_degree.setValue(1)
@@ -855,8 +864,9 @@ class MainWindow(QMainWindow):
         idx = self.scale_mode.findText(cfg.scale.mode)
         if idx >= 0:
             self.scale_mode.setCurrentIndex(idx)
-        self.steps.setValue(int(cfg.train.total_steps))
-        self.max_gaussians.setValue(int(getattr(cfg.train, "max_gaussians", 40_000)))
+        self.steps.setValue(max(1, min(1_000, int(cfg.train.total_steps) // 1000)))
+        max_g = int(getattr(cfg.train, "max_gaussians", 40_000))
+        self.max_gaussians.setValue(max(1, min(30_000, max_g // 1000)))
         self.sh_degree.setValue(max(0, min(int(cfg.train.sh_degree), 3)))
         exp_every = int(cfg.train.export_every)
         self.export_every.setValue(max(50, min(exp_every, 1000)))
@@ -1024,8 +1034,8 @@ class MainWindow(QMainWindow):
         cfg.sfm.mode = self.sfm_mode.currentText()  # type: ignore[assignment]
         cfg.sfm.mapper = self.sfm_mapper.currentText()  # type: ignore[assignment]
         cfg.scale.mode = self.scale_mode.currentText()  # type: ignore[assignment]
-        cfg.train.total_steps = int(self.steps.value())
-        cfg.train.max_gaussians = int(self.max_gaussians.value())
+        cfg.train.total_steps = int(self.steps.value()) * 1000
+        cfg.train.max_gaussians = int(self.max_gaussians.value()) * 1000
         cfg.train.sh_degree = int(self.sh_degree.value())
         cfg.train.export_every = int(self.export_every.value())
         cfg.train.viewer_every = 100

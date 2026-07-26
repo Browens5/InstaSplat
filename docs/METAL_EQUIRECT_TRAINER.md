@@ -80,7 +80,7 @@ train:
   max_resolution: 1024
   export_every: 500        # incremental equirect_XXXXXX.ply (GUI: 50–1000)
   sh_degree: 1             # 0–3 spherical harmonics
-  max_gaussians: 40000
+  max_gaussians: 40000     # per tile/job (GUI: up to 30M, shown in thousands)
   viewer_every: 100        # async subsampled live.ply for GUI viewer
   lr: 0.01
   with_eval3d: true
@@ -89,9 +89,10 @@ train:
   densify_every: 200
 ```
 
-GUI **Training** group exposes steps, max Gaussians, SH degree, and PLY export
-interval. The live viewer reloads a **subsampled** `live.ply` every
-`viewer_every` steps (default 100, written asynchronously).
+GUI **Training** group exposes steps and max Gaussians in **thousands**
+(`1 k = 1,000`; steps up to `1,000 k` = 1M; max Gaussians up to `30,000 k` = 30M
+per tile/job), plus SH degree and PLY export interval. The live viewer reloads a
+**subsampled** `live.ply` every `viewer_every` steps (default 100, written asynchronously).
 
 ### Speed path (Mac)
 

@@ -61,16 +61,26 @@ def run_metal_equirect_train(
 
     sh_degree = max(0, min(int(cfg.train.sh_degree), 3))
     lr = float(cfg.train.lr)
-    steps = int(cfg.train.total_steps)
-    max_gaussians = max(1_000, int(getattr(cfg.train, "max_gaussians", 40_000)))
+    steps = max(1_000, min(1_000_000, int(cfg.train.total_steps)))
+    max_gaussians = max(1_000, min(30_000_000, int(getattr(cfg.train, "max_gaussians", 40_000))))
     export_every = max(50, min(int(cfg.train.export_every), 10_000))
     viewer_every = max(1, int(getattr(cfg.train, "viewer_every", 100)))
     composite = str(cfg.train.composite or "metal")
     if composite not in {"tile", "oit", "metal"}:
         log.warning("Unknown composite=%s; using metal", composite)
         composite = "metal"
-    if steps > 50_000:
-        log.warning("total_steps=%d is high for metal_equirect; consider 10k–20k", steps)
+    if steps > 100_000:
+        log.warning(
+            "total_steps=%d is very high; consider 10k–30k per tile unless you "
+            "intentionally want a long run (max 1,000,000)",
+            steps,
+        )
+    if max_gaussians > 1_000_000:
+        log.warning(
+            "max_gaussians=%d is very high for Metal/MPS memory; "
+            "prefer tiled mode with smaller per-tile caps if you OOM",
+            max_gaussians,
+        )
 
     def _progress(ev: dict) -> None:
         # Heartbeat for GUI / external monitors (align with viewer_every)

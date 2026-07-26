@@ -43,7 +43,7 @@ InstaSplat’s Mac-local, tiled 8K pipeline.
 ### 3dgrut (nv-tlabs) — 3DGRT / 3DGUT
 - Ray-traced Gaussians + **3DGUT** for distorted / rolling-shutter cameras inside rasterization.
 - Production tip: use **gsplat** for modular training; 3DGUT is the path for true equirect/fisheye without cubemap.
-- **Use:** cloud CUDA scale path; local Mac uses metal_equirect (cubemap SfM + equirect train).
+- **Use:** cloud CUDA scale path; local Mac uses EQUIRECTANGULAR COLMAP + metal_equirect.
 
 ### threedtiles (ebeaufay) — streaming large scenes
 - 3D Tiles viewer for three.js (LOD, streaming).

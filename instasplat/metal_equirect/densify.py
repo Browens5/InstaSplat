@@ -63,7 +63,7 @@ def _split_gaussians(model: GaussianModel, idx: torch.Tensor, scale_div: float =
         torch.tensor(scale_div, device=device, dtype=means.dtype)
     )
     f_rest = None
-    if model.sh_degree >= 1 and isinstance(model.f_rest, nn.Parameter) and model.f_rest.numel():
+    if isinstance(model.f_rest, nn.Parameter) and model.f_rest.numel():
         f_rest = model.f_rest.data[idx].clone()
 
     eps = torch.randn_like(means) * (scales / scale_div)

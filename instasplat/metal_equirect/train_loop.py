@@ -16,6 +16,7 @@ from instasplat.metal_equirect.dataset import EquirectDataset, load_view_tensors
 from instasplat.metal_equirect.densify import DensifyState, densify_and_prune
 from instasplat.metal_equirect.gaussians import (
     GaussianModel,
+    clamp_sh_degree,
     export_ply,
     gaussians_from_points,
 )
@@ -47,6 +48,13 @@ def _model_param_devices(model: GaussianModel) -> set[str]:
     return {str(p.device) for p in model.parameters()}
 
 
+def _f_rest_tensor(model: GaussianModel, n: int | None = None) -> torch.Tensor:
+    if isinstance(model.f_rest, torch.nn.Parameter) and model.f_rest.numel() > 0:
+        return model.f_rest if n is None else model.f_rest[:n]
+    n = model.n if n is None else n
+    return model.f_dc.new_zeros(n, 0)
+
+
 def _probe_rasterize(
     model: GaussianModel,
     device: torch.device,
@@ -59,18 +67,13 @@ def _probe_rasterize(
     R = torch.eye(3, device=device, dtype=model.means.dtype)
     t = torch.zeros(3, device=device, dtype=model.means.dtype)
     n = min(model.n, 64)
-    f_rest = (
-        model.f_rest[:n]
-        if model.sh_degree >= 1 and isinstance(model.f_rest, torch.nn.Parameter)
-        else model.f_dc.new_zeros(n, 0)
-    )
     pred = rasterize_equirect(
         model.means[:n],
         model.get_quats()[:n],
         model.get_scales()[:n],
         model.get_opacity()[:n],
         model.f_dc[:n],
-        f_rest,
+        _f_rest_tensor(model, n),
         R,
         t,
         cam,
@@ -91,12 +94,32 @@ def _probe_rasterize(
             pass
 
 
+def _build_model(
+    dataset: EquirectDataset,
+    *,
+    target_sh: int,
+    sh_warmup_steps: int,
+    max_gaussians: int,
+    device: torch.device,
+) -> GaussianModel:
+    active = 0 if sh_warmup_steps > 0 and target_sh > 0 else target_sh
+    return gaussians_from_points(
+        dataset.points_xyz,
+        dataset.points_rgb,
+        sh_degree=active,
+        max_sh_degree=target_sh,
+        max_points=max_gaussians,
+        device=device,
+    )
+
+
 def train_equirect(
     dataset: EquirectDataset,
     export_dir: Path,
     *,
     total_steps: int = 5_000,
-    export_every: int = 1_000,
+    export_every: int = 500,
+    viewer_every: int = 25,
     sh_degree: int = 1,
     lr: float = 0.01,
     max_gaussians_render: int = 8_000,
@@ -115,13 +138,10 @@ def train_equirect(
     """
     Optimize Gaussians against equirect views.
 
-    Features vs v1:
-    - Tile-based (or OIT) compositing
-    - Optional 3DGUT-style eval3d opacity modulation
-    - MCMC densify/prune with grad accumulation
-    - SH degree warmup schedule
-    - Preview JPEG + progress callback for GUI / logs
-    - MPS probe with automatic CPU fallback on device bugs
+    - Tile / OIT compositing, optional eval3d
+    - SH degree 0–3 with stepwise warmup
+    - Incremental PLY every ``export_every``; ``live.ply`` every ``viewer_every``
+    - MPS probe with automatic CPU fallback
     """
     device = pick_device(prefer_mps=prefer_mps)
     export_dir = Path(export_dir)
@@ -130,19 +150,22 @@ def train_equirect(
     preview_dir.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
 
-    # Best-effort Metal metallib compile on macOS (non-fatal)
     status = metal_status()
     if status["xcrun"] and not status["compiled"]:
         compile_metallib()
     if log:
         log.info("metal_runtime: %s", status)
 
-    target_sh = max(0, min(int(sh_degree), 1))
-    model = gaussians_from_points(
-        dataset.points_xyz,
-        dataset.points_rgb,
-        sh_degree=0 if sh_warmup_steps > 0 else target_sh,
-        max_points=max_init_points,
+    target_sh = clamp_sh_degree(sh_degree)
+    max_gaussians = max(1_000, int(max_init_points))
+    export_every = max(0, int(export_every))
+    viewer_every = max(0, int(viewer_every))
+
+    model = _build_model(
+        dataset,
+        target_sh=target_sh,
+        sh_warmup_steps=sh_warmup_steps,
+        max_gaussians=max_gaussians,
         device=device,
     )
     devices = _model_param_devices(model)
@@ -152,7 +175,6 @@ def train_equirect(
             "all must live on the training device."
         )
 
-    # Probe MPS early; fall back to CPU if PyTorch Metal misbehaves.
     if device.type == "mps":
         try:
             _probe_rasterize(
@@ -166,11 +188,11 @@ def train_equirect(
                     msg.splitlines()[0][:160],
                 )
             device = torch.device("cpu")
-            model = gaussians_from_points(
-                dataset.points_xyz,
-                dataset.points_rgb,
-                sh_degree=0 if sh_warmup_steps > 0 else target_sh,
-                max_points=max_init_points,
+            model = _build_model(
+                dataset,
+                target_sh=target_sh,
+                sh_warmup_steps=sh_warmup_steps,
+                max_gaussians=max_gaussians,
                 device=device,
             )
 
@@ -181,11 +203,17 @@ def train_equirect(
     if log:
         log.info(
             "metal_equirect: device=%s views=%d init_gaussians=%d steps=%d "
+            "sh=%d/%d max_gaussians=%d export_every=%d viewer_every=%d "
             "eval3d=%s composite=%s",
             device,
             len(dataset),
             model.n,
             total_steps,
+            model.sh_degree,
+            target_sh,
+            max_gaussians,
+            export_every,
+            viewer_every,
             with_eval3d,
             composite,
         )
@@ -193,34 +221,37 @@ def train_equirect(
     last_loss = 0.0
     ply_path: Path | None = None
     preview_path: Path | None = None
+    live_path: Path | None = None
     n_views = max(len(dataset), 1)
     densify_until = int(total_steps * densify_until_frac)
+    # Progressive SH: bump one degree every sh_warmup_steps
+    next_sh_step = int(sh_warmup_steps) if sh_warmup_steps > 0 else 0
 
     for step in range(1, total_steps + 1):
-        # SH warmup
-        if target_sh >= 1 and model.sh_degree < target_sh and step >= sh_warmup_steps:
-            model.set_active_sh_degree(target_sh)
+        if (
+            target_sh > model.sh_degree
+            and next_sh_step > 0
+            and step >= next_sh_step
+        ):
+            new_deg = min(target_sh, model.sh_degree + 1)
+            model.set_active_sh_degree(new_deg)
             opt = _rebuild_optimizer(model, lr)
+            next_sh_step = step + int(sh_warmup_steps)
             if log:
-                log.info("Enabled SH degree %d at step %d", target_sh, step)
+                log.info("Enabled SH degree %d at step %d", new_deg, step)
 
         view = dataset.views[(step - 1) % n_views]
         rgb, mask, R, t = load_view_tensors(view, device)
         cam = EquirectCamera(view.width, view.height)
 
         opt.zero_grad(set_to_none=True)
-        f_rest = (
-            model.f_rest
-            if model.sh_degree >= 1 and isinstance(model.f_rest, torch.nn.Parameter)
-            else model.f_dc.new_zeros(model.n, 0)
-        )
         pred = rasterize_equirect(
             model.means,
             model.get_quats(),
             model.get_scales(),
             model.get_opacity(),
             model.f_dc,
-            f_rest,
+            _f_rest_tensor(model),
             R,
             t,
             cam,
@@ -244,7 +275,7 @@ def train_equirect(
             dstats = densify_and_prune(
                 model,
                 densify_state,
-                max_gaussians=max_init_points,
+                max_gaussians=max_gaussians,
             )
             opt = _rebuild_optimizer(model, lr)
             if log and (dstats["cloned"] or dstats["split"] or dstats["pruned"]):
@@ -258,24 +289,30 @@ def train_equirect(
         if preview_every > 0 and (step % preview_every == 0 or step == 1):
             preview_path = _write_preview(pred, preview_dir / f"step_{step:06d}.jpg")
 
+        # Live viewer PLY (overwrite) — GUI polls this
+        if viewer_every > 0 and (step % viewer_every == 0 or step == 1):
+            live_path = export_ply(model, export_dir / "live.ply")
+
         if export_every > 0 and (step % export_every == 0 or step == total_steps):
             ply_path = export_ply(model, export_dir / f"equirect_{step:06d}.ply")
             if log:
                 log.info(
-                    "step %d/%d loss=%.5f gaussians=%d → %s",
+                    "step %d/%d loss=%.5f gaussians=%d sh=%d → %s",
                     step,
                     total_steps,
                     last_loss,
                     model.n,
+                    model.sh_degree,
                     ply_path.name,
                 )
         elif log and step % 50 == 0:
             log.info(
-                "step %d/%d loss=%.5f gaussians=%d",
+                "step %d/%d loss=%.5f gaussians=%d sh=%d",
                 step,
                 total_steps,
                 last_loss,
                 model.n,
+                model.sh_degree,
             )
 
         if on_progress is not None:
@@ -288,6 +325,7 @@ def train_equirect(
                     "sh_degree": model.sh_degree,
                     "preview": str(preview_path) if preview_path else None,
                     "ply": str(ply_path) if ply_path else None,
+                    "live_ply": str(live_path) if live_path else None,
                 }
             )
 
@@ -295,6 +333,7 @@ def train_equirect(
         ply_path = export_ply(model, export_dir / "equirect_final.ply")
     final = export_dir / "scene.ply"
     export_ply(model, final)
+    export_ply(model, export_dir / "live.ply")
     ply_path = final
 
     return TrainStats(
@@ -324,6 +363,6 @@ def _rebuild_optimizer(model: GaussianModel, lr: float) -> torch.optim.Adam:
         {"params": [model.quats], "lr": lr * 0.1},
         {"params": [model.f_dc], "lr": lr},
     ]
-    if model.sh_degree >= 1 and isinstance(model.f_rest, torch.nn.Parameter):
+    if isinstance(model.f_rest, torch.nn.Parameter) and model.f_rest.numel() > 0:
         params.append({"params": [model.f_rest], "lr": lr * 0.25})
     return torch.optim.Adam(params, lr=lr, eps=1e-15)

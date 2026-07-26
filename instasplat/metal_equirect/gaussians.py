@@ -10,10 +10,26 @@ import torch.nn as nn
 
 
 _SH_C0 = 0.28209479177387814
+_MAX_SH_DEGREE = 3
+
+
+def clamp_sh_degree(degree: int) -> int:
+    return max(0, min(int(degree), _MAX_SH_DEGREE))
+
+
+def sh_rest_coeffs(degree: int) -> int:
+    """Number of rest (non-DC) SH bands for a given degree: (d+1)² − 1."""
+    d = clamp_sh_degree(degree)
+    return max(0, (d + 1) ** 2 - 1)
+
+
+def sh_rest_dim(degree: int) -> int:
+    """Flat f_rest width = rest_bands × 3 (RGB)."""
+    return sh_rest_coeffs(degree) * 3
 
 
 class GaussianModel(nn.Module):
-    """3D Gaussians with DC + optional higher SH (degree ≤ 1 in v1)."""
+    """3D Gaussians with DC + SH rest bands (degree 0–3)."""
 
     def __init__(
         self,
@@ -21,6 +37,7 @@ class GaussianModel(nn.Module):
         rgbs: torch.Tensor,
         *,
         sh_degree: int = 1,
+        max_sh_degree: int | None = None,
         init_scale: float = 0.02,
     ) -> None:
         super().__init__()
@@ -30,7 +47,12 @@ class GaussianModel(nn.Module):
         means = means.to(device=device, dtype=dtype)
         rgbs = rgbs.to(device=device, dtype=dtype)
 
-        self.sh_degree = max(0, min(int(sh_degree), 1))
+        max_sh = clamp_sh_degree(max_sh_degree if max_sh_degree is not None else sh_degree)
+        active = clamp_sh_degree(sh_degree)
+        active = min(active, max_sh)
+        self.max_sh_degree = max_sh
+        self.sh_degree = active
+
         self.means = nn.Parameter(means.clone())
         # All trainable tensors must share ``means.device`` (MPS crashes on mixed ops).
         self.opacities = nn.Parameter(
@@ -44,8 +66,9 @@ class GaussianModel(nn.Module):
         self.quats = nn.Parameter(quats)
         f_dc = (rgbs.clamp(0, 1) - 0.5) / _SH_C0
         self.f_dc = nn.Parameter(f_dc)
-        if self.sh_degree >= 1:
-            self.f_rest = nn.Parameter(torch.zeros(n, 9, device=device, dtype=dtype))
+        rest_dim = sh_rest_dim(max_sh)
+        if rest_dim > 0:
+            self.f_rest = nn.Parameter(torch.zeros(n, rest_dim, device=device, dtype=dtype))
         else:
             self.register_buffer("f_rest", torch.zeros(n, 0, device=device, dtype=dtype))
 
@@ -72,7 +95,7 @@ class GaussianModel(nn.Module):
                 param = getattr(self, name)
                 new = nn.Parameter(param.data[keep].clone())
                 setattr(self, name, new)
-            if self.sh_degree >= 1 and self.f_rest.numel() > 0:
+            if isinstance(self.f_rest, nn.Parameter) and self.f_rest.numel() > 0:
                 self.f_rest = nn.Parameter(self.f_rest.data[keep].clone())
 
     def densify_clone(self, idx: torch.Tensor, scale_div: float = 1.6) -> None:
@@ -87,7 +110,7 @@ class GaussianModel(nn.Module):
                 "quats": self.quats.data[idx].clone(),
                 "f_dc": self.f_dc.data[idx].clone(),
             }
-            if self.sh_degree >= 1 and isinstance(self.f_rest, nn.Parameter) and self.f_rest.numel():
+            if isinstance(self.f_rest, nn.Parameter) and self.f_rest.numel():
                 extras["f_rest"] = self.f_rest.data[idx].clone()
             for name, extra in extras.items():
                 param = getattr(self, name)
@@ -95,18 +118,24 @@ class GaussianModel(nn.Module):
                 setattr(self, name, nn.Parameter(merged))
 
     def set_active_sh_degree(self, degree: int) -> None:
-        """Enable higher SH bands mid-training (allocates f_rest if needed)."""
-        degree = max(0, min(int(degree), 1))
-        if degree <= self.sh_degree:
-            self.sh_degree = degree
-            return
+        """Raise the active SH evaluation degree (≤ max_sh_degree)."""
+        degree = min(clamp_sh_degree(degree), self.max_sh_degree)
+        need = sh_rest_dim(self.max_sh_degree)
         with torch.no_grad():
-            if degree >= 1 and (
-                not isinstance(self.f_rest, nn.Parameter) or self.f_rest.numel() == 0
+            if need > 0 and (
+                not isinstance(self.f_rest, nn.Parameter) or self.f_rest.shape[-1] < need
             ):
-                self.f_rest = nn.Parameter(
-                    torch.zeros(self.n, 9, device=self.means.device, dtype=self.means.dtype)
+                old = (
+                    self.f_rest.data
+                    if isinstance(self.f_rest, nn.Parameter) and self.f_rest.numel()
+                    else None
                 )
+                fresh = torch.zeros(
+                    self.n, need, device=self.means.device, dtype=self.means.dtype
+                )
+                if old is not None:
+                    fresh[:, : old.shape[-1]] = old
+                self.f_rest = nn.Parameter(fresh)
         self.sh_degree = degree
 
 
@@ -115,6 +144,7 @@ def gaussians_from_points(
     rgb: np.ndarray,
     *,
     sh_degree: int = 1,
+    max_sh_degree: int | None = None,
     max_points: int = 80_000,
     device: torch.device | None = None,
 ) -> GaussianModel:
@@ -140,7 +170,13 @@ def gaussians_from_points(
     if device is not None:
         means = means.to(device)
         rgbs = rgbs.to(device)
-    return GaussianModel(means, rgbs, sh_degree=sh_degree, init_scale=init_scale)
+    return GaussianModel(
+        means,
+        rgbs,
+        sh_degree=sh_degree,
+        max_sh_degree=max_sh_degree,
+        init_scale=init_scale,
+    )
 
 
 def export_ply(model: GaussianModel, path: Path) -> Path:

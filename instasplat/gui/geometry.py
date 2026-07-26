@@ -285,9 +285,33 @@ def discover_colmap_model(job_root: Path) -> Path | None:
 
 
 def discover_splat_ply(job_root: Path) -> Path | None:
+    """
+    Prefer training ``live.ply`` (updated every viewer_every steps), then
+    newest checkpoint / export PLY.
+    """
     from instasplat.utils.paths import JobPaths
 
     paths = JobPaths(job_root)
+    # Live training preview first (single-job and per-chunk)
+    live_candidates = [paths.brush_export / "live.ply"]
+    if paths.chunks.is_dir():
+        for c in sorted(paths.chunks.glob("chunk_*"), reverse=True):
+            live_candidates.append(c / "05_train" / "exports" / "live.ply")
+    newest_live: Path | None = None
+    newest_live_m = -1.0
+    for live in live_candidates:
+        if live.is_file():
+            m = live.stat().st_mtime
+            if m > newest_live_m:
+                newest_live, newest_live_m = live, m
+    if newest_live is not None:
+        # Prefer live unless a final export is newer
+        for root in (paths.export, paths.merged):
+            ply = find_latest_ply(root)
+            if ply is not None and ply.stat().st_mtime > newest_live_m + 0.5:
+                return ply
+        return newest_live
+
     for root in (paths.export, paths.merged, paths.brush_export):
         ply = find_latest_ply(root)
         if ply is not None:

@@ -484,85 +484,110 @@ class MainWindow(QMainWindow):
         form.addRow("Project", self.name_edit)
         layout.addWidget(form_box)
 
-        opts = QGroupBox("Pipeline options")
-        opts_form = QFormLayout(opts)
-        opts_form.setSpacing(10)
+        # —— Mode ——
+        mode_box = QGroupBox("Mode")
+        mode_form = QFormLayout(mode_box)
+        mode_form.setSpacing(8)
+        self.large_8k_cb = QCheckBox("Tiled long-360 (auto-chunk + merge)")
+        self.large_8k_cb.setChecked(True)
+        self.large_8k_cb.setToolTip(
+            "Split long captures into overlapping tiles, train each, then merge."
+        )
+        mode_form.addRow(self.large_8k_cb)
         self.fps = QDoubleSpinBox()
         self.fps.setRange(0.1, 30.0)
         self.fps.setValue(6.0)
         self.fps.setSingleStep(0.5)
-        opts_form.addRow("Base sample FPS", self.fps)
-
-        self.mask_cb = QCheckBox("Mask people with YOLO")
+        self.fps.setToolTip("Frame sample rate for extract / tiling")
+        mode_form.addRow("Sample FPS", self.fps)
+        self.mask_cb = QCheckBox("Mask people (YOLO)")
         self.mask_cb.setChecked(True)
-        opts_form.addRow(self.mask_cb)
+        mode_form.addRow(self.mask_cb)
+        layout.addWidget(mode_box)
 
-        self.large_8k_cb = QCheckBox(
-            "Mac long-360 tiled mode (auto-chunk + Metal + GPS/gyro merge)"
-        )
-        self.large_8k_cb.setChecked(True)
-        opts_form.addRow(self.large_8k_cb)
-
-        trainer_lbl = QLabel("metal_equirect (native 360 / COLMAP)")
-        trainer_lbl.setObjectName("tagline")
-        trainer_lbl.setToolTip(
-            "InstaSplat trains Gaussians on full equirect frames with PyTorch MPS/Metal."
-        )
-        opts_form.addRow("Trainer", trainer_lbl)
-
-        self.refine_cb = QCheckBox("Refine poses (COLMAP BA + GPS/gyro blend)")
-        self.refine_cb.setChecked(True)
-        opts_form.addRow(self.refine_cb)
-
-        self.lod_cb = QCheckBox("Streamed LOD export (lod-meta.json)")
-        self.lod_cb.setChecked(True)
-        opts_form.addRow(self.lod_cb)
-
-        self.cloud_cb = QCheckBox("Write cloud_job.json + quality.json packaging")
-        self.cloud_cb.setChecked(True)
-        opts_form.addRow(self.cloud_cb)
-
+        # —— Reconstruction ——
+        recon_box = QGroupBox("Reconstruction")
+        recon_form = QFormLayout(recon_box)
+        recon_form.setSpacing(8)
         self.sfm_mode = QComboBox()
         self.sfm_mode.addItems(["equirectangular", "auto", "perspective_cubemap"])
         self.sfm_mode.setToolTip(
-            "equirectangular (default): full 360 panoramas in COLMAP + metal_equirect. "
-            "Needs COLMAP ≥ 4.1. perspective_cubemap is a legacy opt-in."
+            "equirectangular (default): full 360 in COLMAP ≥ 4.1.\n"
+            "perspective_cubemap is a legacy opt-in."
         )
-        opts_form.addRow("SfM mode", self.sfm_mode)
-
+        recon_form.addRow("SfM mode", self.sfm_mode)
         self.sfm_mapper = QComboBox()
         self.sfm_mapper.addItems(["incremental", "global"])
         self.sfm_mapper.setToolTip(
-            "incremental (default): classic COLMAP mapper.\n"
-            "global: COLMAP global_mapper (GLOMAP) — often faster on large, "
-            "well-connected tiles. Needs COLMAP with integrated GLOMAP."
+            "incremental: classic COLMAP mapper.\n"
+            "global: GLOMAP / global_mapper (needs COLMAP with GLOMAP)."
         )
-        opts_form.addRow("SfM mapper", self.sfm_mapper)
-
+        recon_form.addRow("Mapper", self.sfm_mapper)
         self.scale_mode = QComboBox()
         self.scale_mode.addItems(["gps", "none", "known_distance", "stereo_baseline"])
-        opts_form.addRow("Metric scale", self.scale_mode)
+        recon_form.addRow("Metric scale", self.scale_mode)
+        self.refine_cb = QCheckBox("Refine poses (BA + GPS/gyro)")
+        self.refine_cb.setChecked(True)
+        recon_form.addRow(self.refine_cb)
+        layout.addWidget(recon_box)
 
+        # —— Training ——
+        train_box = QGroupBox("Training")
+        train_form = QFormLayout(train_box)
+        train_form.setSpacing(8)
+        train_note = QLabel("metal_equirect · live viewer refreshes every 25 steps")
+        train_note.setObjectName("tagline")
+        train_form.addRow(train_note)
         self.steps = QSpinBox()
-        self.steps.setRange(1000, 100000)
-        self.steps.setSingleStep(1000)
-        self.steps.setValue(20000)
-        opts_form.addRow("Train steps / chunk", self.steps)
+        self.steps.setRange(100, 100_000)
+        self.steps.setSingleStep(500)
+        self.steps.setValue(15_000)
+        self.steps.setToolTip("Optimization steps per job / tile")
+        train_form.addRow("Steps", self.steps)
+        self.max_gaussians = QSpinBox()
+        self.max_gaussians.setRange(5_000, 500_000)
+        self.max_gaussians.setSingleStep(5_000)
+        self.max_gaussians.setValue(40_000)
+        self.max_gaussians.setToolTip("Cap on Gaussian count (init + densify)")
+        train_form.addRow("Max Gaussians", self.max_gaussians)
+        self.sh_degree = QSpinBox()
+        self.sh_degree.setRange(0, 3)
+        self.sh_degree.setValue(1)
+        self.sh_degree.setToolTip(
+            "Spherical harmonics degree for view-dependent color (0=diffuse … 3=richest)"
+        )
+        train_form.addRow("SH degree (0–3)", self.sh_degree)
+        self.export_every = QSpinBox()
+        self.export_every.setRange(50, 1000)
+        self.export_every.setSingleStep(50)
+        self.export_every.setValue(500)
+        self.export_every.setToolTip("Write equirect_XXXXXX.ply checkpoints every N steps")
+        train_form.addRow("PLY export every", self.export_every)
+        layout.addWidget(train_box)
 
-        # Export formats as checkboxes
+        # —— Export ——
+        export_box = QGroupBox("Export")
+        export_form = QFormLayout(export_box)
+        export_form.setSpacing(8)
         export_wrap = QWidget()
         export_layout = QHBoxLayout(export_wrap)
         export_layout.setContentsMargins(0, 0, 0, 0)
-        export_layout.setSpacing(12)
+        export_layout.setSpacing(10)
         self.format_cbs: dict[str, QCheckBox] = {}
-        for fmt in ["ply", "sog", "spz", "glb", "html", "csv", "compressed.ply"]:
+        for fmt in ["ply", "sog", "spz", "glb", "html"]:
             cb = QCheckBox(fmt)
             cb.setChecked(fmt in ("ply", "sog", "spz"))
             self.format_cbs[fmt] = cb
             export_layout.addWidget(cb)
         export_layout.addStretch(1)
-        opts_form.addRow("Exports", export_wrap)
-        layout.addWidget(opts)
+        export_form.addRow("Formats", export_wrap)
+        self.lod_cb = QCheckBox("Streamed LOD (lod-meta.json)")
+        self.lod_cb.setChecked(True)
+        export_form.addRow(self.lod_cb)
+        self.cloud_cb = QCheckBox("Package manifests (cloud + quality)")
+        self.cloud_cb.setChecked(True)
+        export_form.addRow(self.cloud_cb)
+        layout.addWidget(export_box)
 
         # Stages: checkboxes + per-task progress
         stages_box = QGroupBox("Pipeline stages")
@@ -597,9 +622,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(stages_box)
 
         note = QLabel(
-            "Open previous run loads a job folder so you can continue. "
-            "Live viewer shows COLMAP sparse points during SfM and splat centers "
-            "during metal_equirect training. Pause freezes a live run; Stop terminates it."
+            "Open a previous run to continue. Viewer: COLMAP sparse during SfM, "
+            "then live.ply every 25 train steps. Pause freezes; Stop terminates."
         )
         note.setWordWrap(True)
         note.setObjectName("tagline")
@@ -815,6 +839,10 @@ class MainWindow(QMainWindow):
         if idx >= 0:
             self.scale_mode.setCurrentIndex(idx)
         self.steps.setValue(int(cfg.train.total_steps))
+        self.max_gaussians.setValue(int(getattr(cfg.train, "max_gaussians", 40_000)))
+        self.sh_degree.setValue(max(0, min(int(cfg.train.sh_degree), 3)))
+        exp_every = int(cfg.train.export_every)
+        self.export_every.setValue(max(50, min(exp_every, 1000)))
         wanted = set(cfg.export.formats or [])
         for fmt, cb in self.format_cbs.items():
             cb.setChecked(fmt in wanted)
@@ -973,6 +1001,10 @@ class MainWindow(QMainWindow):
         cfg.sfm.mapper = self.sfm_mapper.currentText()  # type: ignore[assignment]
         cfg.scale.mode = self.scale_mode.currentText()  # type: ignore[assignment]
         cfg.train.total_steps = int(self.steps.value())
+        cfg.train.max_gaussians = int(self.max_gaussians.value())
+        cfg.train.sh_degree = int(self.sh_degree.value())
+        cfg.train.export_every = int(self.export_every.value())
+        cfg.train.viewer_every = 25
         cfg.export.formats = formats  # type: ignore[assignment]
         return cfg
 

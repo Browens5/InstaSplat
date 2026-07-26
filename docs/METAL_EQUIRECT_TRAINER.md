@@ -92,8 +92,10 @@ train:
 
 GUI **Training** group exposes steps and max Gaussians in **thousands**
 (`1 k = 1,000`; steps up to `1,000 k` = 1M; max Gaussians up to `30,000 k` = 30M
-per tile/job), plus SH degree and PLY export interval. The live viewer reloads a
-**subsampled** `live.ply` every `viewer_every` steps (default 100, written asynchronously).
+per tile/job), plus SH degree and PLY export interval. The live viewer embeds the
+**PlayCanvas SuperSplat Viewer** and reloads a subsampled `live.ply` every
+`viewer_every` steps (default 100, up to `live_max_points` Gaussians, written
+asynchronously). COLMAP sparse previews still use the OpenGL point cloud path.
 
 ### Densification (AbsGS / gsplat-style)
 
@@ -114,7 +116,7 @@ per tile/job), plus SH degree and PLY export interval. The live viewer reloads a
 - **Vectorized torch OIT** (`composite: oit`) — batched soft splat via `index_add`
 - **View cache** — decode panoramas once into RAM/MPS
 - **Resolution schedule** — half-res / large tiles early → full-res / fine tiles late
-- **Async live preview** — subsampled PLY so training is not blocked by export
+- **Async live preview** — SuperSplat-embedded `live.ply` (≤`live_max_points`) so training is not blocked by export
 
 ## Device policy
 

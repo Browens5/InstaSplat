@@ -107,6 +107,10 @@ def run_metal_equirect_train(
             except Exception:  # noqa: BLE001 — never kill train over UI
                 pass
 
+    live_max_points = max(
+        8_000,
+        min(500_000, int(getattr(cfg.train, "live_max_points", 100_000))),
+    )
     stats = train_equirect(
         dataset,
         export_dir,
@@ -122,6 +126,7 @@ def run_metal_equirect_train(
         densify_every=int(cfg.train.densify_every),
         prefer_mps=bool(cfg.metal.prefer_metal),
         opacity_reset_every=int(getattr(cfg.train, "opacity_reset_every", 3000)),
+        live_max_points=live_max_points,
         on_progress=_progress,
         log=log,
     )

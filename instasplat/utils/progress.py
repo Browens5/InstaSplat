@@ -86,12 +86,15 @@ class StageProgressTracker:
     _current: str | None = None
     _completed: dict[str, float] = field(default_factory=dict)
     _idx: int = 0
+    # Fine-grained phase inside the current stage (e.g. COLMAP feature extraction)
+    _activity: str | None = None
 
     def start_stage(self, name: str, index: int) -> ProgressEvent:
         self._current = name
         self._idx = index
         self._stage_t0 = time.time()
-        return self.event(name, index, f"Starting {name}", frac_override=index / max(len(self.stages), 1))
+        self._activity = f"Starting {name}"
+        return self.event(name, index, self._activity, frac_override=index / max(len(self.stages), 1))
 
     def finish_stage(self, name: str, index: int) -> ProgressEvent:
         elapsed = 0.0
@@ -100,6 +103,7 @@ class StageProgressTracker:
         self._completed[name] = elapsed
         self._current = None
         self._stage_t0 = None
+        self._activity = None
         frac = (index + 1) / max(len(self.stages), 1)
         now = time.time()
         overall_elapsed = now - self._t0
@@ -118,12 +122,25 @@ class StageProgressTracker:
             status="finished",
         )
 
+    def set_activity(self, message: str) -> None:
+        """Update the in-stage phase string (picked up by heartbeats)."""
+        text = (message or "").strip()
+        if text:
+            self._activity = text
+
+    def announce_activity(self, message: str) -> ProgressEvent:
+        """Set activity and return a non-quiet event (log + GUI status)."""
+        self.set_activity(message)
+        name = self._current or (self.stages[self._idx] if self.stages else "pipeline")
+        return self.event(name, self._idx, self._activity or message, quiet=False)
+
     def heartbeat(self, message: str | None = None, status: str = "running") -> ProgressEvent:
         name = self._current or (self.stages[self._idx] if self.stages else "pipeline")
+        msg = message or self._activity or f"Running {name}"
         return self.event(
             name,
             self._idx,
-            message or f"Running {name}",
+            msg,
             status=status,
             quiet=True,
         )

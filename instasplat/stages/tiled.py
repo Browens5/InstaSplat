@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import shutil
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -31,6 +33,11 @@ from instasplat.utils.paths import JobPaths
 from instasplat.utils.process import get_logger, run_cmd
 from instasplat.utils.scale import camera_centers, read_images_txt
 from instasplat.utils.telemetry import interpolate_xyz
+
+if TYPE_CHECKING:
+    from instasplat.utils.progress import ProgressEvent
+
+ChunkProgressCb = Callable[[str, "ProgressEvent"], None]
 
 
 @dataclass
@@ -262,6 +269,8 @@ def process_one_chunk(
     cfg: PipelineConfig,
     parent_paths: JobPaths,
     plan: ChunkPlan,
+    *,
+    on_progress: ChunkProgressCb | None = None,
 ) -> tuple[str, bool, str | None]:
     from instasplat.utils.control import get_controller
 
@@ -342,8 +351,17 @@ def process_one_chunk(
     )
 
     from instasplat.pipeline import Pipeline
+    from instasplat.utils.progress import ProgressEvent
 
-    result = Pipeline(child_cfg).run(stages=child_cfg.stages)
+    def _forward(ev: ProgressEvent) -> None:
+        if on_progress is None:
+            return
+        try:
+            on_progress(plan.chunk_id, ev)
+        except Exception:  # noqa: BLE001
+            pass
+
+    result = Pipeline(child_cfg, on_progress=_forward).run(stages=child_cfg.stages)
     # Persist plan alongside result
     (cdir / "chunk_plan.json").write_text(
         json.dumps(
@@ -365,7 +383,13 @@ def process_one_chunk(
     return plan.chunk_id, True, None
 
 
-def run_process_chunks(cfg: PipelineConfig, paths: JobPaths, manifest: ChunkManifest) -> dict[str, bool]:
+def run_process_chunks(
+    cfg: PipelineConfig,
+    paths: JobPaths,
+    manifest: ChunkManifest,
+    *,
+    on_chunk_progress: ChunkProgressCb | None = None,
+) -> dict[str, bool]:
     log = get_logger("instasplat.chunk", paths.logs / "chunk_process.log")
     workers = max(1, cfg.chunk.max_parallel_chunks)
     if cfg.metal.prefer_metal and cfg.metal.serialize_train:
@@ -379,14 +403,22 @@ def run_process_chunks(cfg: PipelineConfig, paths: JobPaths, manifest: ChunkMani
     results: dict[str, bool] = {}
     if workers == 1 or cfg.dry_run:
         for plan in manifest.chunks:
-            cid, ok, err = process_one_chunk(cfg, paths, plan)
+            cid, ok, err = process_one_chunk(
+                cfg, paths, plan, on_progress=on_chunk_progress
+            )
             results[cid] = ok
             if not ok:
                 log.warning("%s failed: %s", cid, err)
     else:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futs = {
-                pool.submit(process_one_chunk, cfg, paths, plan): plan.chunk_id
+                pool.submit(
+                    process_one_chunk,
+                    cfg,
+                    paths,
+                    plan,
+                    on_progress=on_chunk_progress,
+                ): plan.chunk_id
                 for plan in manifest.chunks
             }
             for fut in as_completed(futs):

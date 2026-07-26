@@ -238,6 +238,28 @@ class Pipeline:
         summary.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
         return result
 
+    def report_activity(self, message: str, *, log_once: bool = True) -> None:
+        """
+        Publish a fine-grained in-stage phase (e.g. COLMAP feature extraction).
+
+        Heartbeats keep repeating the latest activity; ``log_once`` also emits a
+        non-quiet event so the GUI log records each phase transition.
+        """
+        if self._tracker is None:
+            return
+        text = (message or "").strip()
+        if not text:
+            return
+        if log_once:
+            ev = self._tracker.announce_activity(text)
+        else:
+            self._tracker.set_activity(text)
+            ev = self._tracker.heartbeat(text)
+        try:
+            self.on_progress(ev)
+        except Exception:  # noqa: BLE001
+            pass
+
     def _apply_metal_defaults(self) -> None:
         if not self.cfg.metal.prefer_metal:
             return
@@ -272,7 +294,7 @@ class Pipeline:
             result.mask = run_mask(cfg, paths)
         elif name == "sfm":
             try:
-                result.sfm = run_sfm(cfg, paths)
+                result.sfm = run_sfm(cfg, paths, on_activity=self.report_activity)
             except Exception as exc:
                 self.log.warning("SfM failed (%s); trying telemetry fallback", exc)
                 fb = run_fallback_poses(cfg, paths)
@@ -349,7 +371,23 @@ class Pipeline:
             self._manifest = run_plan_chunks(cfg, paths)
         elif name == "process_chunks":
             manifest = self._load_manifest()
-            self._chunk_status = run_process_chunks(cfg, paths, manifest)
+
+            def _chunk_activity(chunk_id: str, child_ev: ProgressEvent) -> None:
+                # Surface per-tile COLMAP / train phases on the parent stage
+                if child_ev.quiet and "COLMAP" not in (child_ev.message or ""):
+                    # Keep heartbeats light; still refresh activity string
+                    msg = f"{chunk_id} · {child_ev.stage}: {child_ev.message}"
+                    self.report_activity(msg, log_once=False)
+                    return
+                if child_ev.stage == "sfm" or "COLMAP" in (child_ev.message or ""):
+                    msg = f"{chunk_id} · {child_ev.message}"
+                else:
+                    msg = f"{chunk_id} · {child_ev.stage}: {child_ev.message}"
+                self.report_activity(msg, log_once=not child_ev.quiet)
+
+            self._chunk_status = run_process_chunks(
+                cfg, paths, manifest, on_chunk_progress=_chunk_activity
+            )
             if not any(self._chunk_status.values()) and not cfg.dry_run:
                 raise RuntimeError("All chunks failed during process_chunks")
         elif name == "align_chunks":

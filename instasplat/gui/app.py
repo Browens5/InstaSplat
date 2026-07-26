@@ -328,6 +328,7 @@ class StageRow(QWidget):
     def __init__(self, name: str, help_text: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.name = name
+        self._help_text = help_text
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 2, 0, 2)
         layout.setSpacing(10)
@@ -358,7 +359,17 @@ class StageRow(QWidget):
     def is_checked(self) -> bool:
         return self.checkbox.isChecked()
 
-    def set_progress(self, frac: float, *, state: str = "idle") -> None:
+    def set_detail(self, detail: str | None) -> None:
+        """Show live phase text (e.g. COLMAP feature extraction) while active."""
+        text = (detail or "").strip()
+        if text:
+            self.help_label.setText(text)
+            self.help_label.setToolTip(text)
+        else:
+            self.help_label.setText(self._help_text)
+            self.help_label.setToolTip(self._help_text)
+
+    def set_progress(self, frac: float, *, state: str = "idle", detail: str | None = None) -> None:
         value = int(max(0.0, min(1.0, frac)) * 1000)
         # Avoid redundant polish churn on every 1s tick when state/value unchanged
         prev_state = getattr(self, "_ui_state", None)
@@ -369,18 +380,24 @@ class StageRow(QWidget):
         if state == "done":
             self.bar.setObjectName("taskDone")
             self.bar.setFormat("done")
+            self.set_detail(None)
         elif state == "active":
             self.bar.setObjectName("taskActive")
             pct = int(round(frac * 100))
             self.bar.setFormat(f"{pct}%")
+            if detail is not None:
+                self.set_detail(detail)
         elif state == "pending":
             self.bar.setObjectName("task")
             self.bar.setFormat("…")
             self.bar.setValue(0)
             self._ui_value = 0
+            self.set_detail(None)
         else:
             self.bar.setObjectName("task")
             self.bar.setFormat(f"{int(round(frac * 100))}%" if value else "")
+            if state == "idle":
+                self.set_detail(None)
         if prev_state != state:
             self.bar.style().unpolish(self.bar)
             self.bar.style().polish(self.bar)
@@ -901,6 +918,7 @@ class MainWindow(QMainWindow):
         # Map stage name → index in this run
         index_of = {n: i for i, n in enumerate(run)}
         cur_idx = index_of.get(ev.stage, ev.stage_index)
+        detail = (ev.message or "").strip()
 
         if ev.status == "finished":
             cur_frac = 1.0
@@ -919,11 +937,11 @@ class MainWindow(QMainWindow):
                 if ev.status == "finished":
                     row.set_progress(1.0, state="done")
                 else:
-                    row.set_progress(cur_frac, state="active")
+                    row.set_progress(cur_frac, state="active", detail=detail or None)
             else:
                 row.set_progress(0.0, state="pending")
 
-        # Sticky current-task bar
+        # Sticky current-task bar — include COLMAP / phase detail
         if ev.status == "finished" and cur_idx >= len(run) - 1:
             self.task_progress.setValue(1000)
             self.task_progress.setFormat("complete")
@@ -933,7 +951,13 @@ class MainWindow(QMainWindow):
         else:
             pct = int(round(cur_frac * 100))
             self.task_progress.setValue(int(cur_frac * 1000))
-            self.task_progress.setFormat(f"{ev.stage}  {pct}%")
+            phase = detail if detail and detail.lower() != f"starting {ev.stage}" else ""
+            if phase:
+                # Keep format readable in the narrow bar
+                short = phase if len(phase) <= 56 else phase[:53] + "…"
+                self.task_progress.setFormat(f"{ev.stage} · {short}  {pct}%")
+            else:
+                self.task_progress.setFormat(f"{ev.stage}  {pct}%")
             self.task_progress.update()
 
     def _build_config(self) -> PipelineConfig:
@@ -1078,8 +1102,14 @@ class MainWindow(QMainWindow):
             or (self._last_event.status == "finished" and ev.status == "running")
         ):
             self._stage_wall_t0 = time.time() - max(0.0, ev.stage_elapsed_sec)
+        prev_msg = self._last_event.message if self._last_event else None
         self._last_event = ev
-        if not ev.quiet or ev.status != "running":
+        # Always refresh status for phase changes (incl. quiet COLMAP heartbeats)
+        if (
+            not ev.quiet
+            or ev.status != "running"
+            or (ev.message and ev.message != prev_msg)
+        ):
             status = "PAUSED" if self._paused or ev.status == "paused" else ev.stage
             self.status_label.setText(
                 f"{status}  ({ev.stage_index + 1}/{ev.stage_count}) — {ev.message}"

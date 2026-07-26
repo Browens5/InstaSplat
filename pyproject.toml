@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "instasplat"
 version = "0.1.0"
-description = "Turn Insta360 360° video into navigable 3D Gaussian splats on a Mac"
+description = "Full Mac pipeline: Insta360 360° video → navigable 3D Gaussian splat"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -15,7 +15,7 @@ keywords = [
   "insv",
   "gaussian-splatting",
   "colmap",
-  "brush",
+  "metal",
   "yolo",
   "splat-transform",
 ]
@@ -28,6 +28,7 @@ dependencies = [
   "typer>=0.12",
   "tqdm>=4.66",
   "ultralytics>=8.2",
+  "torch>=2.2",
 ]
 
 [project.optional-dependencies]
@@ -39,6 +40,10 @@ instasplat = "instasplat.cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["instasplat"]
+
+# Ship Metal shader sources with the wheel
+[tool.hatch.build.targets.wheel.force-include]
+"instasplat/metal_equirect/metal" = "instasplat/metal_equirect/metal"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

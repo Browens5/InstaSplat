@@ -1,7 +1,10 @@
-# Capture guidelines (Insta360 → large tiled splat)
+# Capture guidelines (Insta360 → Mac splat pipeline)
 
-Adapted from on-the-fly-nvs, LongSplat, and Self-Cali-GS practices for InstaSplat’s
-sequential tiled pipeline.
+How to film so InstaSplat’s **full Mac 360 → splat pipeline** has a chance to
+succeed. Pipeline overview: [MAC_360_PIPELINE.md](MAC_360_PIPELINE.md).
+
+Adapted from on-the-fly-nvs, LongSplat, and Self-Cali-GS practices for the
+sequential tiled path.
 
 ## Do
 

@@ -130,7 +130,7 @@ def write_telemetry_colmap_model(
             f"{i} {q[0]} {q[1]} {q[2]} {q[3]} {tvec[0]} {tvec[1]} {tvec[2]} 1 {img.name}"
         )
         img_lines.append("")  # empty POINTS2D
-        # Seed a sparse point at each camera center for Brush init
+        # Seed a sparse point at each camera center for Gaussian init
         pts_lines.append(
             f"{i} {center[0]} {center[1]} {center[2]} 200 200 200 1.0"
         )

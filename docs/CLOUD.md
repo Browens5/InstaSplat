@@ -1,6 +1,8 @@
 # Cloud & hybrid processing options
 
-InstaSplat is designed **local-first** on macOS. Use cloud when stitching, SfM, or training exceeds laptop resources, or when you need official MediaSDK.
+InstaSplat’s **full Mac pipeline** is local-first
+([MAC_360_PIPELINE.md](MAC_360_PIPELINE.md)). Use cloud when stitching, SfM, or
+training exceeds laptop resources, or when you need official MediaSDK.
 
 ## What to run where
 
@@ -12,7 +14,7 @@ InstaSplat is designed **local-first** on macOS. Use cloud when stitching, SfM, 
 | Gyro parse | ✅ | ✅ | Tiny |
 | YOLO masks | ✅ MPS | ✅ CUDA | Cloud wins on long clips |
 | COLMAP | ✅ CPU (small) | ✅ Strongly recommended for large sets | |
-| Brush train | ✅ Metal | ✅ If you need speed/headless scale | Brush also runs locally well |
+| metal_equirect train | ✅ MPS/Metal | ✅ CUDA gsplat/3DGUT for scale | Local Mac path |
 | splat-transform | ✅ | ✅ | Lightweight Node CLI |
 
 ## Option A — Hybrid (recommended)
@@ -20,9 +22,9 @@ InstaSplat is designed **local-first** on macOS. Use cloud when stitching, SfM, 
 1. On Mac: Studio → equirect MP4, or upload raw INSV.
 2. Cloud worker: MediaSDK stitch (if needed) → ffmpeg frames → YOLO → COLMAP.
 3. Download `sparse/0` + images/masks to Mac.
-4. Local Brush training + splat-transform export (interactive viewer).
+4. Local metal_equirect training + splat-transform export.
 
-This keeps the **interactive splat loop** on the Mac (Brush’s strength) while outsourcing the **least Mac-friendly** pieces.
+This keeps the **interactive splat loop** on the Mac while outsourcing the **least Mac-friendly** pieces.
 
 ## Option B — Full cloud batch
 
@@ -32,7 +34,7 @@ Package stages as containers:
 instasplat-stitch   # Linux + MediaSDK (licensed)
 instasplat-prep     # ffmpeg + YOLO
 instasplat-sfm      # COLMAP/GLOMAP
-instasplat-train    # Brush headless or gsplat CUDA
+instasplat-train    # metal_equirect local or gsplat CUDA
 instasplat-export   # splat-transform
 ```
 
@@ -107,7 +109,7 @@ Recommended backends in the manifest:
 
 | Backend | When to use |
 |---------|-------------|
-| `gsplat_3dgut` | Native equirect / fisheye training (skip cubemap) |
+| `gsplat_3dgut` | Native equirect / fisheye training (skip cubemap). Local Mac counterpart: `train.backend: metal_equirect` — see [METAL_EQUIRECT_TRAINER.md](METAL_EQUIRECT_TRAINER.md) |
 | `lichtfeld` | CUDA MCMC / workstation-grade train + export |
 | `nerfstudio_splatfacto` | Use packaged `transforms.json` |
 | `hierarchical_merge_cuda` | Kerbl hierarchy merger on tile anchors |

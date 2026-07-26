@@ -503,18 +503,12 @@ class MainWindow(QMainWindow):
         self.large_8k_cb.setChecked(True)
         opts_form.addRow(self.large_8k_cb)
 
-        self.trainer = QComboBox()
-        self.trainer.addItems(["brush", "opensplat"])
-        opts_form.addRow("Trainer", self.trainer)
-
-        self.brush_viewer_cb = QCheckBox(
-            "Open Brush native viewer while training (separate window)"
+        trainer_lbl = QLabel("metal_equirect (native 360 / COLMAP)")
+        trainer_lbl.setObjectName("tagline")
+        trainer_lbl.setToolTip(
+            "InstaSplat trains Gaussians on full equirect frames with PyTorch MPS/Metal."
         )
-        self.brush_viewer_cb.setChecked(False)
-        self.brush_viewer_cb.setToolTip(
-            "Passes --with-viewer to Brush. In-GUI 3D panel still polls export PLYs."
-        )
-        opts_form.addRow(self.brush_viewer_cb)
+        opts_form.addRow("Trainer", trainer_lbl)
 
         self.refine_cb = QCheckBox("Refine poses (COLMAP BA + GPS/gyro blend)")
         self.refine_cb.setChecked(True)
@@ -592,7 +586,7 @@ class MainWindow(QMainWindow):
         note = QLabel(
             "Open previous run loads a job folder so you can continue. "
             "Live viewer shows COLMAP sparse points during SfM and splat centers "
-            "during Brush training. Pause freezes a live run; Stop terminates it."
+            "during metal_equirect training. Pause freezes a live run; Stop terminates it."
         )
         note.setWordWrap(True)
         note.setObjectName("tagline")
@@ -659,22 +653,7 @@ class MainWindow(QMainWindow):
         self.doctor_btn = QPushButton("Check dependencies")
         self.doctor_btn.setObjectName("secondary")
         self.doctor_btn.clicked.connect(self._doctor)
-        self.install_brush_btn = QPushButton("Install Brush")
-        self.install_brush_btn.setObjectName("secondary")
-        self.install_brush_btn.clicked.connect(self._install_brush)
-        self.run_btn = QPushButton("Run pipeline")
-        self.run_btn.clicked.connect(self._run)
-        self.pause_btn = QPushButton("Pause")
-        self.pause_btn.setObjectName("warning")
-        self.pause_btn.setEnabled(False)
-        self.pause_btn.clicked.connect(self._toggle_pause)
-        # Live freeze/unfreeze — not the same as "continue previous project"
-        self.stop_btn = QPushButton("Stop")
-        self.stop_btn.setObjectName("danger")
-        self.stop_btn.setEnabled(False)
-        self.stop_btn.clicked.connect(self._stop)
         btns.addWidget(self.doctor_btn)
-        btns.addWidget(self.install_brush_btn)
         btns.addStretch(1)
         btns.addWidget(self.pause_btn)
         btns.addWidget(self.stop_btn)
@@ -797,10 +776,7 @@ class MainWindow(QMainWindow):
         else:
             self.fps.setValue(float(cfg.extract.fps))
         self.mask_cb.setChecked(bool(cfg.mask.enabled))
-        idx = self.trainer.findText(cfg.train.backend)
-        if idx >= 0:
-            self.trainer.setCurrentIndex(idx)
-        self.brush_viewer_cb.setChecked(bool(cfg.train.with_viewer))
+        # Trainer is always metal_equirect
         self.refine_cb.setChecked(bool(cfg.refine.enabled))
         self.lod_cb.setChecked(bool(cfg.export.streamed_lod))
         self.cloud_cb.setChecked(
@@ -830,31 +806,9 @@ class MainWindow(QMainWindow):
             lines.append(f"  [{mark}] {d['name']}: {d.get('notes') or d.get('path') or ''}")
         lines.append("Ready stages: " + ", ".join(f"{k}={v}" for k, v in data["ready_stages"].items()))
         if not data["ready_stages"].get("train"):
-            lines.append("Tip: click Install Brush (or run instasplat install-brush)")
+            lines.append("Tip: pip install torch (MPS wheel on Apple Silicon) for training")
         self.log.append("\n".join(lines))
 
-    def _install_brush(self) -> None:
-        self.install_brush_btn.setEnabled(False)
-        self.log.append(
-            "Installing Brush (GitHub release binary if available; else Rust 1.88+ source build)…"
-        )
-        QApplication.processEvents()
-        try:
-            from instasplat.utils.brush_install import install_brush
-
-            result = install_brush(force_rebuild=True)
-            self.log.append(result.message)
-            if result.log_path and not result.ok:
-                self.log.append(f"Log: {result.log_path}")
-            if result.ok:
-                QMessageBox.information(self, "InstaSplat", result.message)
-            else:
-                QMessageBox.warning(self, "InstaSplat", result.message)
-        except Exception as exc:  # noqa: BLE001
-            self.log.append(f"Brush install failed: {exc}")
-            QMessageBox.critical(self, "InstaSplat", str(exc))
-        finally:
-            self.install_brush_btn.setEnabled(True)
 
     def _select_mode_stages(self) -> None:
         if self._suppress_stage_reset:
@@ -983,8 +937,7 @@ class MainWindow(QMainWindow):
         cfg.stages = stages
         cfg.skip_existing = True
         cfg.mask.enabled = self.mask_cb.isChecked()
-        cfg.train.backend = self.trainer.currentText()  # type: ignore[assignment]
-        cfg.train.with_viewer = self.brush_viewer_cb.isChecked()
+        cfg.train.backend = "metal_equirect"
         cfg.refine.enabled = self.refine_cb.isChecked()
         cfg.export.streamed_lod = self.lod_cb.isChecked()
         cfg.package.cloud_manifest = self.cloud_cb.isChecked()
@@ -1041,7 +994,7 @@ class MainWindow(QMainWindow):
             self._paused = True
             self.pause_btn.setText("Unpause")
             self.status_label.setText("Paused — pipeline + training frozen")
-            self.log.append("⏸ Paused (stages wait; Brush/OpenSplat SIGSTOP)")
+            self.log.append("⏸ Paused (stages wait at checkpoints)")
         else:
             self.controller.resume()
             self._paused = False

@@ -117,12 +117,16 @@ def test_trainer_backend_roundtrip(tmp_path: Path) -> None:
         output_dir=tmp_path / "out",
         project_name="x",
     )
-    cfg.train.backend = "opensplat"
+    assert cfg.train.backend == "metal_equirect"
+    # Legacy brush/opensplat YAML coerces to metal_equirect
     path = tmp_path / "c.yaml"
-    cfg.save(path)
+    path.write_text(
+        "input_path: a.mp4\noutput_dir: out\nproject_name: x\n"
+        "train:\n  backend: brush\n  brush_bin: brush\n",
+        encoding="utf-8",
+    )
     loaded = PipelineConfig.load(path)
-    assert loaded.train.backend == "opensplat"
-    assert loaded.train.opensplat_bin == "opensplat"
+    assert loaded.train.backend == "metal_equirect"
 
 
 def test_init_large_config_roundtrip(tmp_path: Path) -> None:

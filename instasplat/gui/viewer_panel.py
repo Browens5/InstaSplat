@@ -277,6 +277,7 @@ class ViewerPanel(QWidget):
                 if p.exists():
                     entries.append((f"sfm: {p.relative_to(self._job_root)}", p))
         add_glob("train", paths.brush_export, "**/*.ply", 20)
+        add_glob("preview", paths.brush_export / "previews", "*.jpg", 12)
         add_glob("export", paths.export, "*", 30)
         add_glob("merged", paths.merged, "*", 20)
         if paths.chunks.is_dir():

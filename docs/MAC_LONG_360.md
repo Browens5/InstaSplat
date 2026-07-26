@@ -1,7 +1,10 @@
 # Best local Mac pipeline: long 360 → tiled splat
 
-This is InstaSplat’s recommended **local Apple Silicon** path for long
-Insta360 captures. It does **not** require CUDA, LingBot-Map, or MediaSDK.
+This is the **tiled product path** inside InstaSplat’s full Mac
+360° video → splat pipeline. For why that pipeline exists and how it is
+built end to end, see **[MAC_360_PIPELINE.md](MAC_360_PIPELINE.md)**.
+
+It does **not** require CUDA, LingBot-Map, or MediaSDK.
 
 ```text
 Studio equirect MP4 (+ sibling INSV / gyro+gps CSV)
@@ -10,7 +13,7 @@ Studio equirect MP4 (+ sibling INSV / gyro+gps CSV)
   → preflight (tools, stitch, disk, GPS soft-fallback)
   → per tile (Metal-serialized):
         YOLO MPS masks → cubemap COLMAP → metric scale
-        → pose refine → Brush/OpenSplat Metal → PLY
+        → pose refine → metal_equirect (MPS) → PLY
   → GPS/gyro Sim3 align (RANSAC + ICP + RMSE gate)
   → splat-transform merge + prune → ply / sog / spz
   → quality.json + hierarchy LOD + cloud_job.json
@@ -22,10 +25,9 @@ Studio equirect MP4 (+ sibling INSV / gyro+gps CSV)
 # 1) Export stitched equirect MP4 from Insta360 Studio (8K@30 ok)
 # 2) Keep the original .insv next to it (telemetry), or add gyro.csv / gps.csv
 
-instasplat doctor          # confirm mac_long_360=yes
-instasplat install-brush   # once — downloads Apple Silicon binary (or cargo build)
+instasplat doctor          # confirm mac_long_360=yes (needs PyTorch)
 instasplat mac-360 -i ./capture_equirect_8k.mp4 -o ./runs -n walk_360
-# GUI: Pause freezes stages + SIGSTOPs Brush; Unpause / Stop also available
+# GUI: Pause freezes stages at checkpoints; Unpause / Stop also available
 
 # Resume-safe: re-run skips tiles that already have scene.ply
 instasplat mac-360 -i ./capture_equirect_8k.mp4 -o ./runs -n walk_360
@@ -50,7 +52,9 @@ The right-hand **Live viewer** polls the job folder during a run: COLMAP sparse
 points after the mapper writes `points3D.*`, then splat centers from the newest
 training/export PLY. Use the **Artifacts** tab to browse frames, masks, sparse
 models, and exports (double-click to open; **Show in 3D** for `points3D` / `.ply`).
-Optional checkbox **Open Brush native viewer** still launches Brush’s own window.
+Training uses **metal_equirect** (full equirect frames + COLMAP poses) on PyTorch MPS.
+See [METAL_EQUIRECT_TRAINER.md](METAL_EQUIRECT_TRAINER.md). Preview JPEGs appear under
+`05_train/exports/previews/` during a run.
 
 ## Run sections individually
 
@@ -87,8 +91,7 @@ Sidecar names next to the MP4: `gyro.csv`, `gps.csv`, or `<stem>.gyro.csv`.
 | YOLO people masks | PyTorch **MPS** (auto CPU fallback on known MPS crashes) |
 | Cubemap remap | CPU OpenCV |
 | COLMAP | CPU (typical Homebrew) |
-| Brush train | **Metal / WebGPU** (serialized per tile) |
-| OpenSplat train | **Metal MPS** (`--trainer opensplat`) |
+| metal_equirect train | **PyTorch MPS / Metal** (serialized per tile) |
 | splat-transform merge | CPU Node |
 
 ## Outputs
@@ -137,6 +140,8 @@ Start with defaults from `enable_mac_long_360_defaults()`.
 
 ## See also
 
+- [MAC_360_PIPELINE.md](MAC_360_PIPELINE.md) — need + full pipeline architecture
+- [METAL_SPLAT_WORKFLOW.md](METAL_SPLAT_WORKFLOW.md) — runbook
 - [LARGE_8K.md](LARGE_8K.md) — tile/align details
 - [CAPTURE_GUIDELINES.md](CAPTURE_GUIDELINES.md) — walk slow, overlap, avoid crowds
-- [SETUP_MACOS.md](SETUP_MACOS.md) — brew / cargo / npm installs
+- [SETUP_MACOS.md](SETUP_MACOS.md) — one-shot install

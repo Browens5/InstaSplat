@@ -1,12 +1,10 @@
-"""Tests for pause control, progress ETA, and Brush install helpers."""
+"""Tests for pause control and progress ETA helpers."""
 
 from __future__ import annotations
 
 import threading
 import time
-from pathlib import Path
 
-from instasplat.utils.brush_install import find_built_brush
 from instasplat.utils.control import PipelineStopped, RunController
 from instasplat.utils.progress import (
     HeartbeatPublisher,
@@ -111,12 +109,3 @@ def test_controller_stop_raises() -> None:
         raised = True
     assert raised
 
-
-def test_find_built_brush_missing(tmp_path: Path) -> None:
-    assert find_built_brush(tmp_path) is None
-    release = tmp_path / "target" / "release"
-    release.mkdir(parents=True)
-    fake = release / "brush"
-    fake.write_text("x", encoding="utf-8")
-    fake.chmod(0o755)
-    assert find_built_brush(tmp_path) == fake

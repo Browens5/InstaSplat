@@ -7,7 +7,7 @@ InstaSplat’s Mac-local, tiled 8K pipeline.
 
 | Priority | Strategy | Source | InstaSplat action |
 |----------|----------|--------|-------------------|
-| P0 | Multi-trainer backends (Metal) | OpenSplat, Brush, MetalSplatter | `train.backend = brush \| opensplat` |
+| P0 | Native equirect trainer (Metal/MPS) | metal_equirect (3DGUT-inspired) | `train.backend = metal_equirect` |
 | P0 | Keep sequential + overlapping capture | on-the-fly-nvs, LongSplat | Capture guidelines + overlap checks |
 | P0 | Compressed delivery (SPZ / streamed SOG) | spz, splat-transform, LichtFeld | Default large-8k exports include `spz` |
 | P1 | Hierarchical / LOD after tile merge | hierarchical-3d-gaussians, threedtiles | Optional LOD / streamed-SOG export |
@@ -43,7 +43,7 @@ InstaSplat’s Mac-local, tiled 8K pipeline.
 ### 3dgrut (nv-tlabs) — 3DGRT / 3DGUT
 - Ray-traced Gaussians + **3DGUT** for distorted / rolling-shutter cameras inside rasterization.
 - Production tip: use **gsplat** for modular training; 3DGUT is the path for true equirect/fisheye without cubemap.
-- **Use:** cloud/Linux backend when we want native 360 training; keep cubemap path for Mac Brush/OpenSplat.
+- **Use:** cloud CUDA scale path; local Mac uses metal_equirect (cubemap SfM + equirect train).
 
 ### threedtiles (ebeaufay) — streaming large scenes
 - 3D Tiles viewer for three.js (LOD, streaming).
@@ -74,13 +74,14 @@ InstaSplat’s Mac-local, tiled 8K pipeline.
 
 ### MetalSplatter (scier) — Apple Metal viewer
 - Swift/Metal renderer for PLY/SPZ/.splat on iOS/macOS/visionOS.
-- **Use:** recommended Mac preview path beside Brush viewer; not a trainer.
+- **Use:** recommended Mac viewer for InstaSplat exports; not a trainer.
 
 ### OpenSplat (pierotofy) — portable C++ trainer
 - COLMAP/OpenSfM/ODM/nerfstudio in → PLY/splat out.
 - **Metal (`-DGPU_RUNTIME=MPS`)**, CUDA, HIP, or CPU.
 - Resume training; AGPL license.
-- **Use:** strongest alternative/complement to Brush on Apple Silicon.
+- **Use (historical):** evaluated as a Mac trainer; InstaSplat’s product path is
+  **metal_equirect** (full equirect) instead.
 
 ### instant-ngp (NVlabs)
 - Hash-grid NeRF speed culture; CUDA.
@@ -99,7 +100,7 @@ InstaSplat’s Mac-local, tiled 8K pipeline.
 ## Concrete InstaSplat roadmap
 
 ### Now (implemented or wiring)
-1. Trainer backend switch: `brush` (default) | `opensplat` (Metal MPS build).
+1. Trainer: `metal_equirect` (sole backend; equirect + COLMAP).
 2. Large-8k default exports: `ply`, `sog`, `spz` (+ optional streamed LOD).
 3. Capture guidelines doc (sequential, overlap, speed, dynamics).
 4. Post-merge opacity/NaN prune (LongSplat-style size control).
@@ -117,7 +118,9 @@ preflight gates, INSV/sidecar telemetry, scale-before-refine, resume tiles, merg
 
 ### Next (cloud / research)
 1. **LingBot-Map** as CUDA cloud SfM backend (streaming poses+depth) → COLMAP/Nerfstudio export.
-2. **Native equirect training** via cloud 3DGUT/gsplat (manifest ready; worker runner TBD).
+2. **Native equirect training** — local `metal_equirect` backend (UT equirect rasterizer;
+   see [METAL_EQUIRECT_TRAINER.md](METAL_EQUIRECT_TRAINER.md)); cloud 3DGUT/gsplat remains
+   the CUDA scale path (`cloud_job.json` worker runner TBD).
 3. **Kerbl hierarchy merger** binary integration for true LOD trees.
 4. Full Self-Cali distortion network (iResNet) for raw fisheye.
 
@@ -132,10 +135,10 @@ preflight gates, INSV/sidecar telemetry, scale-before-refine, resume tiles, merg
 
 | Component | Best open option on Mac |
 |-----------|-------------------------|
-| Train | Brush (WebGPU/Metal) or OpenSplat (MPS) |
-| View | Brush viewer, MetalSplatter, PlayCanvas |
+| Train | **metal_equirect** (native 360, MPS/Metal) |
+| View | MetalSplatter, PlayCanvas, InstaSplat GUI |
 | Compress | splat-transform → SOG/SPZ |
-| Distorted 360 train | Cubemap locally; 3DGUT/LichtFeld in cloud |
+| Distorted 360 train | **metal_equirect** locally; 3DGUT/LichtFeld in cloud for scale |
 | Large LOD | Hierarchical-3DGS merger (CUDA) or streamed SOG |
 
 ---

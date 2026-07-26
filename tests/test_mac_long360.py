@@ -19,7 +19,7 @@ def test_mac_long_360_defaults() -> None:
     assert not cfg.allow_unstitched
     assert not cfg.allow_partial_merge
     assert "preflight" in cfg.stages
-    assert cfg.train.backend == "brush"
+    assert cfg.train.backend == "metal_equirect"
     assert "spz" in cfg.export.formats
 
 

@@ -142,6 +142,6 @@ def run_scale(cfg: PipelineConfig, paths: JobPaths, sfm_model: Path) -> ScaleRes
     else:
         src = txt_model if txt_model is not None else sfm_model
         apply_scale_to_model(src, out, scale)
-        # Also copy images path reference for Brush
+        # Also copy images path reference for the trainer
         (paths.scale / "image_path.txt").write_text(str(paths.cubemap_images), encoding="utf-8")
     return ScaleResult(out, scale, mode)

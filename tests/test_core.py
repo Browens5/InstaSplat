@@ -1,4 +1,4 @@
-"""Unit tests that do not require COLMAP/Brush binaries."""
+"""Unit tests that do not require COLMAP or system binaries."""
 
 from __future__ import annotations
 

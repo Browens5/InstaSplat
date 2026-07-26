@@ -124,8 +124,9 @@ class _PointCloudViewMixin:
             self.set_point_cloud(None, title=title)
             self._status = title or "No reconstruction yet"
             return
-        label = title or f"{cloud.n:,} points"
-        self.set_point_cloud(cloud.xyz, cloud.rgb, title=label, fit=True)
+        display = cloud.for_display()
+        label = title or f"{display.n:,} points"
+        self.set_point_cloud(display.xyz, display.rgb, title=label, fit=True)
         self._status = label
 
     def status_text(self) -> str:
